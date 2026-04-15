@@ -1,0 +1,28 @@
+# Camera configuration for OpenRobotDemo
+
+camera:
+  type: "usb"                # Options: "usb", "realsense"
+  device_id: 0               # USB camera index or RealSense serial
+  width: 640
+  height: 480
+  fps: 30
+
+# Camera intrinsics (for 3D reprojection)
+# Example values for a generic 640x480 camera
+# Replace with your actual calibration results!
+intrinsics:
+  fx: 600.0
+  fy: 600.0
+  ppx: 320.0
+  ppy: 240.0
+  depth_scale: 0.001         # RealSense default: 0.001 (mm to m)
+
+# Hand-eye calibration (Eye-in-Hand example)
+# T_cam2end: camera frame -> end-effector frame
+hand_eye:
+  enabled: false
+  rotation_matrix:           # 3x3, row-major
+    - [1.0, 0.0, 0.0]
+    - [0.0, 1.0, 0.0]
+    - [0.0, 0.0, 1.0]
+  translation_vector: [0.0, 0.0, 0.05]   # meters

@@ -1,0 +1,138 @@
+<mujoco model="franka_rgb_scene">
+  <compiler angle="radian" meshdir="assets" autolimits="true"/>
+
+  <option timestep="0.002" iterations="50" tolerance="1e-10" solver="Newton"
+          gravity="0 0 -9.81" cone="pyramidal" impratio="10">
+    <flag warmstart="enable"/>
+  </option>
+
+  <visual>
+    <headlight diffuse="0.8 0.8 0.8" ambient="0.4 0.4 0.4" specular="0.2 0.2 0.2"/>
+    <global azimuth="120" elevation="-20" offwidth="800" offheight="600"/>
+  </visual>
+
+  <default>
+    <joint armature="0.1" damping="2" limited="true"/>
+    <geom contype="1" conaffinity="1" friction="1 0.005 0.001" rgba="0.3 0.3 0.3 1"/>
+    <position ctrllimited="true" ctrlrange="-100 100" kp="1000" kv="100"/>
+  </default>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.6 0.8 1.0" rgb2="0.2 0.4 0.8" width="512" height="512"/>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.9 0.9 0.9" rgb2="0.7 0.7 0.7" width="512" height="512"/>
+    <material name="grid_mat" texture="grid" texrepeat="8 8" reflectance="0.1"/>
+    <material name="table_mat" rgba="0.6 0.4 0.2 1"/>
+    <material name="robot_mat" rgba="0.8 0.1 0.1 1"/>
+    <material name="joint_mat" rgba="0.2 0.2 0.2 1"/>
+    <material name="cam_mat" rgba="0.1 0.1 0.8 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Top-down reference camera -->
+    <camera name="top" mode="fixed" pos="0.4 0 1.5" euler="0 0 0" fovy="45"/>
+
+    <!-- Floor -->
+    <geom name="floor" type="plane" size="5 5 0.1" material="grid_mat"/>
+
+    <!-- Table -->
+    <body name="table" pos="0 0 0">
+      <geom name="table_top" type="box" size="0.5 0.35 0.02" pos="0.4 0 0.4" material="table_mat"/>
+      <geom name="table_leg1" type="box" size="0.03 0.03 0.4" pos="0.1 -0.3 0.2"/>
+      <geom name="table_leg2" type="box" size="0.03 0.03 0.4" pos="0.7 -0.3 0.2"/>
+      <geom name="table_leg3" type="box" size="0.03 0.03 0.4" pos="0.1 0.3 0.2"/>
+      <geom name="table_leg4" type="box" size="0.03 0.03 0.4" pos="0.7 0.3 0.2"/>
+    </body>
+
+    <!-- Target object on table -->
+    <body name="cube" pos="0.5 0.1 0.45">
+      <freejoint/>
+      <geom name="cube_geom" type="box" size="0.03 0.03 0.03" rgba="1 0.8 0.2 1" mass="0.05"/>
+    </body>
+
+    <!-- Robot Base -->
+    <body name="robot_base" pos="0 0 0.4">
+      <geom name="base" type="cylinder" size="0.06 0.03" rgba="0.2 0.2 0.2 1"/>
+
+      <!-- Link 1 -->
+      <body name="link1">
+        <joint name="joint1" type="hinge" axis="0 0 1" range="-2.8973 2.8973" damping="10"/>
+        <geom name="link1_geom" type="cylinder" size="0.04 0.075" pos="0 0 0.075" material="robot_mat"/>
+
+        <!-- Link 2 -->
+        <body name="link2" pos="0 0 0.15">
+          <joint name="joint2" type="hinge" axis="0 1 0" range="-1.7628 1.7628" damping="10"/>
+          <geom name="link2_geom" type="capsule" size="0.035" fromto="0 0 0 0 0 0.15" material="joint_mat"/>
+
+          <!-- Link 3 -->
+          <body name="link3" pos="0 0 0.15">
+            <joint name="joint3" type="hinge" axis="0 0 1" range="-2.8973 2.8973" damping="10"/>
+            <geom name="link3_geom" type="cylinder" size="0.03 0.06" pos="0 0 0.06" material="robot_mat"/>
+
+            <!-- Link 4 -->
+            <body name="link4" pos="0 0 0.12">
+              <joint name="joint4" type="hinge" axis="0 1 0" range="-3.0718 -0.0698" damping="10"/>
+              <geom name="link4_geom" type="capsule" size="0.03" fromto="0 0 0 0 0 0.12" material="joint_mat"/>
+
+              <!-- Link 5 -->
+              <body name="link5" pos="0 0 0.12">
+                <joint name="joint5" type="hinge" axis="0 0 1" range="-2.8973 2.8973" damping="10"/>
+                <geom name="link5_geom" type="cylinder" size="0.025 0.05" pos="0 0 0.05" material="robot_mat"/>
+
+                <!-- Link 6 -->
+                <body name="link6" pos="0 0 0.10">
+                  <joint name="joint6" type="hinge" axis="0 1 0" range="-0.0175 3.7525" damping="10"/>
+                  <geom name="link6_geom" type="capsule" size="0.025" fromto="0 0 0 0 0 0.08" material="joint_mat"/>
+
+                  <!-- Link 7 (Wrist) -->
+                  <body name="link7" pos="0 0 0.08">
+                    <joint name="joint7" type="hinge" axis="0 0 1" range="-2.8973 2.8973" damping="10"/>
+                    <geom name="link7_geom" type="cylinder" size="0.02 0.03" pos="0 0 0.03" material="robot_mat"/>
+
+                    <!-- Gripper Base -->
+                    <body name="gripper_base" pos="0 0 0.06">
+                      <geom name="gripper_base_geom" type="box" size="0.02 0.04 0.01" rgba="0.3 0.3 0.3 1"/>
+
+                      <!-- Left Finger -->
+                      <body name="finger1">
+                        <joint name="finger_joint1" type="slide" axis="0 1 0" range="0 0.04" damping="5"/>
+                        <geom name="finger1_geom" type="box" size="0.01 0.005 0.03" pos="0 0.015 0.03" rgba="0.5 0.5 0.5 1"/>
+                      </body>
+
+                      <!-- Right Finger -->
+                      <body name="finger2">
+                        <joint name="finger_joint2" type="slide" axis="0 -1 0" range="0 0.04" damping="5"/>
+                        <geom name="finger2_geom" type="box" size="0.01 0.005 0.03" pos="0 -0.015 0.03" rgba="0.5 0.5 0.5 1"/>
+                      </body>
+
+                      <!-- RGB Camera -->
+                      <camera name="wrist_cam" mode="fixed" pos="0.05 0 -0.02" euler="0 3.14159 0" fovy="60"/>
+                      <geom name="wrist_cam_marker" type="sphere" size="0.005" pos="0.05 0 -0.02" rgba="1 0 0 1" contype="0" conaffinity="0"/>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position joint="joint1" kp="1000" kv="100" ctrlrange="-2.8973 2.8973"/>
+    <position joint="joint2" kp="1000" kv="100" ctrlrange="-1.7628 1.7628"/>
+    <position joint="joint3" kp="1000" kv="100" ctrlrange="-2.8973 2.8973"/>
+    <position joint="joint4" kp="1000" kv="100" ctrlrange="-3.0718 -0.0698"/>
+    <position joint="joint5" kp="500"  kv="50"  ctrlrange="-2.8973 2.8973"/>
+    <position joint="joint6" kp="500"  kv="50"  ctrlrange="-0.0175 3.7525"/>
+    <position joint="joint7" kp="500"  kv="50"  ctrlrange="-2.8973 2.8973"/>
+    <position joint="finger_joint1" kp="200" kv="20" ctrlrange="0 0.04"/>
+    <position joint="finger_joint2" kp="200" kv="20" ctrlrange="0 0.04"/>
+  </actuator>
+
+  <keyframe>
+    <key name="home"
+         qpos="0 0 0.45 1 0 0 0 0 1.57 0 0.3 0 0 0 0 0"
+         ctrl="0 1.57 0 0.3 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>
