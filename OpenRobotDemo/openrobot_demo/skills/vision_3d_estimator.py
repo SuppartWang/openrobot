@@ -5,9 +5,15 @@ import re
 import json
 import base64
 import logging
+from pathlib import Path
 from typing import Any, Dict, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+
+from dotenv import load_dotenv
+
+# Load .env from OpenRobotDemo root
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
 from openrobot_demo.skills.base import SkillInterface
 
@@ -21,7 +27,7 @@ class Vision3DEstimator(SkillInterface):
                  api_key: Optional[str] = None,
                  base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"):
         self.model = model
-        self.api_key = api_key or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key or os.getenv("KIMI_API_KEY") or os.getenv("DASHSCOPE_API_KEY") or os.getenv("OPENAI_API_KEY")
         self.base_url = base_url
         self._client = None
         if self.api_key:
@@ -44,15 +50,19 @@ class Vision3DEstimator(SkillInterface):
                 camera_intrinsics: Optional[Dict[str, float]] = None,
                 hand_eye_calib: Optional[Dict[str, Any]] = None,
                 end_effector_pose: Optional[list] = None,
+                ground_truth_depth_mm: Optional[float] = None,
                 **kwargs) -> Dict[str, Any]:
         intrinsics = camera_intrinsics or {"fx": 600.0, "fy": 600.0, "ppx": 320.0, "ppy": 240.0}
 
-        # Step 1: VLM detection (with mock fallback)
+        # Step 1: VLM detection (with color-based fallback)
         if self._client is None:
-            logger.warning("VLM client not initialized. Using mock detection fallback.")
+            logger.warning("VLM client not initialized. Using color detection fallback.")
             bbox, center = self._mock_detect(rgb_frame)
         else:
             bbox, center = self._detect_with_vlm(rgb_frame, target_name)
+            if bbox is None:
+                logger.warning("VLM detection failed. Falling back to color detection.")
+                bbox, center = self._mock_detect(rgb_frame)
 
         if bbox is None:
             return {"success": False, "message": f"Could not detect '{target_name}'."}
@@ -61,6 +71,7 @@ class Vision3DEstimator(SkillInterface):
 
         # Step 2: Get depth at center
         camera_3d = None
+        z_m = None
         if depth_frame is not None:
             h, w = depth_frame.shape
             if 0 <= v < h and 0 <= u < w:
@@ -69,14 +80,19 @@ class Vision3DEstimator(SkillInterface):
                 z_raw = float(np.median(patch))
                 z_mm = z_raw  # assume depth_frame already in mm if from RealSense raw
                 z_m = z_mm * 0.001
-                fx, fy, ppx, ppy = intrinsics["fx"], intrinsics["fy"], intrinsics["ppx"], intrinsics["ppy"]
-                x_m = z_m * (u - ppx) / fx
-                y_m = z_m * (v - ppy) / fy
-                camera_3d = [x_m, y_m, z_m]
             else:
                 logger.warning(f"Center ({u},{v}) out of depth bounds.")
+        elif ground_truth_depth_mm is not None:
+            z_m = ground_truth_depth_mm * 0.001
+            logger.info(f"Using ground-truth depth: {z_m:.3f} m")
         else:
-            logger.warning("No depth_frame provided; skipping 3D reprojection.")
+            logger.warning("No depth_frame or GT depth provided; skipping 3D reprojection.")
+
+        if z_m is not None:
+            fx, fy, ppx, ppy = intrinsics["fx"], intrinsics["fy"], intrinsics["ppx"], intrinsics["ppy"]
+            x_m = z_m * (u - ppx) / fx
+            y_m = z_m * (v - ppy) / fy
+            camera_3d = [x_m, y_m, z_m]
 
         # Step 3: Hand-eye transform to base frame
         base_3d = None
@@ -97,8 +113,30 @@ class Vision3DEstimator(SkillInterface):
 
     def _mock_detect(self, rgb_frame: np.ndarray):
         """Fallback detection for testing without VLM API.
-        Returns a bounding box around the center of the image.
+        Tries color-based object detection (yellow) using OpenCV;
+        falls back to image center if no blob is found.
         """
+        try:
+            import cv2
+            # Convert RGB to HSV
+            hsv = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2HSV)
+            # Yellow range in HSV
+            lower_yellow = np.array([20, 100, 100])
+            upper_yellow = np.array([40, 255, 255])
+            mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+            # Morphological close to merge blobs
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                # Pick largest contour
+                c = max(contours, key=cv2.contourArea)
+                x, y, w, h = cv2.boundingRect(c)
+                return (x, y, x + w, y + h), (x + w / 2.0, y + h / 2.0)
+        except Exception as e:
+            logger.warning(f"Color detection failed: {e}")
+
+        # Fallback: center of image
         h, w = rgb_frame.shape[:2]
         x1, y1 = w // 3, h // 3
         x2, y2 = 2 * w // 3, 2 * h // 3

@@ -18,10 +18,15 @@ class ArmMotionExecutor(SkillInterface):
                  mode: control_mode = control_mode.only_sim,
                  dev: str = "/dev/ttyUSB0",
                  end_effector: str = "gripper",
-                 check_collision: bool = True):
-        self._arm = S1_arm(mode=mode, dev=dev, end_effector=end_effector,
-                           check_collision=check_collision)
-        self._solver = S1_slover([0.0, 0.0, 0.0])
+                 check_collision: bool = True,
+                 external_arm=None, external_solver=None):
+        if external_arm is not None:
+            self._arm = external_arm
+            self._solver = external_solver
+        else:
+            self._arm = S1_arm(mode=mode, dev=dev, end_effector=end_effector,
+                               check_collision=check_collision)
+            self._solver = S1_slover([0.0, 0.0, 0.0])
         self._safety = SafetyGateway()
         self._interpolator = JointSpaceInterpolator(num_steps=30)
         self._enabled = False

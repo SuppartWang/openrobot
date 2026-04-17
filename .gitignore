@@ -61,3 +61,14 @@ logs/
 
 # But keep the design doc
 !openrobot设计思路.jpg
+
+# Runtime artifacts
+*.db
+MUJOCO_LOG.TXT
+*.bak
+
+# External projects not part of OpenRobotDemo
+2-nanoclaw/
+Robot\ Property\ Rights\ Experiment/
+code\ \(1\).txt
+step1_capture_detect*.py

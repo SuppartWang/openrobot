@@ -39,18 +39,19 @@ class control_mode(IntEnum):
 
 
 # ---------------------------------------------------------------------------
-# Mock Kinematics (S1_slover compatible)
+# Mock Kinematics (S1_slover compatible) -- 6-DOF
 # ---------------------------------------------------------------------------
 class _MockS1Slover:
-    """Mock kinematics solver for YHRG S1 (7-DOF arm).
+    """Mock kinematics solver for YHRG S1 (6-DOF arm).
 
-    Uses a simplified kinematic model good enough for MVP testing.
+    The real S1_slover operates on 6 joint angles.
+    We accept 7 joints for backward compatibility but warn and truncate.
     """
 
     def __init__(self, end_effector_offset: List[float] = None):
         self.offset = np.array(end_effector_offset or [0.0, 0.0, 0.0])
-        # Rough link lengths for a small desktop manipulator (meters)
-        self.link_lengths = np.array([0.0, 0.15, 0.12, 0.10, 0.08, 0.05, 0.05])
+        # Rough link lengths for a small desktop manipulator (meters) -- 6 DOF
+        self.link_lengths = np.array([0.0, 0.15, 0.12, 0.10, 0.08, 0.05])
         self.joint_axes = [
             np.array([0, 0, 1]),   # J1: base yaw
             np.array([0, 1, 0]),   # J2: shoulder pitch
@@ -58,24 +59,33 @@ class _MockS1Slover:
             np.array([0, 1, 0]),   # J4: elbow pitch
             np.array([0, 0, 1]),   # J5: wrist yaw
             np.array([0, 1, 0]),   # J6: wrist pitch
-            np.array([0, 0, 1]),   # J7: wrist roll
         ]
+
+    def _ensure_6dof(self, joints: List[float]) -> List[float]:
+        if len(joints) > 6:
+            logger.warning(
+                "[MockS1Slover] Received %d joints, truncating to 6-DOF for S1 compatibility.",
+                len(joints),
+            )
+            return joints[:6]
+        if len(joints) < 6:
+            return list(joints) + [0.0] * (6 - len(joints))
+        return joints
 
     def _fk_matrix(self, joints: List[float]) -> np.ndarray:
         """Return 4x4 homogeneous transform of end-effector."""
+        joints = self._ensure_6dof(joints)
         T = np.eye(4)
         for i, theta in enumerate(joints):
             axis = self.joint_axes[i]
             trans = np.array([0.0, 0.0, self.link_lengths[i]])
             if i == 0:
                 trans = np.array([0.0, 0.0, 0.08])  # base height
-            # Rotation around axis by theta
             rotmat = R.from_rotvec(axis * theta).as_matrix()
             Ti = np.eye(4)
             Ti[:3, :3] = rotmat
             Ti[:3, 3] = trans
             T = T @ Ti
-        # Apply end-effector offset
         T[:3, 3] += T[:3, :3] @ self.offset
         return T
 
@@ -83,7 +93,6 @@ class _MockS1Slover:
         T = self._fk_matrix(joints)
         pos = T[:3, 3]
         quat = R.from_matrix(T[:3, :3]).as_quat()  # scipy: x,y,z,w
-        # Return [x,y,z,qx,qy,qz,qw]
         return [float(pos[0]), float(pos[1]), float(pos[2]),
                 float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])]
 
@@ -95,12 +104,11 @@ class _MockS1Slover:
                 float(euler[0]), float(euler[1]), float(euler[2])]
 
     def inverse_quat(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
-        """Simple numerical IK using pseudo-inverse Jacobian."""
         target = np.array(target_pose)
         target_pos = target[:3]
         target_rot = R.from_quat(target[3:7]).as_matrix()
-        # Initial guess
-        q = np.array(joint_positions if joint_positions is not None else [0.0] * 7)
+        q = np.array(joint_positions if joint_positions is not None else [0.0] * 6)
+        q = np.array(self._ensure_6dof(q.tolist()))
         for _ in range(50):
             T = self._fk_matrix(q.tolist())
             pos = T[:3, 3]
@@ -112,12 +120,10 @@ class _MockS1Slover:
             if np.linalg.norm(err) < 1e-3:
                 break
             J = self._compute_jacobian(q)
-            # Damped least squares
             dq = J.T @ np.linalg.solve(J @ J.T + 0.01 * np.eye(6), err)
             q = q + 0.3 * dq
-            # Clamp
-            q = np.clip(q, [-2.967, 0.0, 0.0, -1.571, -1.571, -1.571, -1.745],
-                        [2.967, 3.142, 2.967, 1.518, 1.571, 1.571, 1.745])
+            q = np.clip(q, [-2.967, 0.0, 0.0, -1.571, -1.571, -1.571],
+                        [2.967, 3.142, 2.967, 1.518, 1.571, 1.571])
         return q.tolist()
 
     def inverse_eular(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
@@ -129,11 +135,11 @@ class _MockS1Slover:
 
     def _compute_jacobian(self, q: np.ndarray) -> np.ndarray:
         delta = 1e-4
-        J = np.zeros((6, 7))
+        J = np.zeros((6, 6))
         T0 = self._fk_matrix(q.tolist())
         pos0 = T0[:3, 3]
         rot0 = T0[:3, :3]
-        for i in range(7):
+        for i in range(6):
             qd = q.copy()
             qd[i] += delta
             Td = self._fk_matrix(qd.tolist())
@@ -151,6 +157,7 @@ class _MockS1Slover:
 class _MockS1Arm:
     """Mock implementation of S1_arm for development without real hardware."""
 
+    # 6-DOF joint limits (radians)
     _JOINT_LIMITS = [
         (-2.967, 2.967),
         (0.0, 3.142),
@@ -158,8 +165,9 @@ class _MockS1Arm:
         (-1.571, 1.518),
         (-1.571, 1.571),
         (-1.571, 1.571),
-        (-1.745, 1.745),
     ]
+    # 7th value in get_pos() is gripper aperture (0=closed ~ 2=open)
+    _GRIPPER_LIMIT = (0.0, 2.0)
 
     def __init__(self, mode: control_mode, dev: str = "/dev/ttyUSB0",
                  end_effector: str = "None", check_collision: bool = True,
@@ -170,11 +178,10 @@ class _MockS1Arm:
         self.check_collision = check_collision
         self.arm_version = arm_version
         self._enabled = False
-        self._pos = [0.0] * 7
+        self._pos = [0.0] * 7   # [j1..j6, gripper_pos]
         self._vel = [0.0] * 7
         self._tau = [0.0] * 7
         self._temp = [25.0] * 7
-        self._gripper_pos = 0.0
         self._solver = _MockS1Slover([0.0, 0.0, 0.0])
         logger.info(f"[MockS1Arm] Initialized in mode={mode.name}, end_effector={end_effector}")
 
@@ -192,18 +199,21 @@ class _MockS1Arm:
         if not self._enabled and self.mode == control_mode.only_real:
             logger.warning("[MockS1Arm] joint_control ignored: motors not enabled.")
             return False
-        if len(pos) < 7:
-            pos = list(pos) + [0.0] * (7 - len(pos))
-        clamped = [clamp(pos[i], self._JOINT_LIMITS[i]) for i in range(7)]
-        self._pos = clamped
+        # Real S1 joint_control expects 6 DOFs
+        if len(pos) >= 6:
+            controlled = pos[:6]
+        else:
+            controlled = list(pos) + [0.0] * (6 - len(pos))
+        clamped = [clamp(controlled[i], self._JOINT_LIMITS[i]) for i in range(6)]
+        self._pos[:6] = clamped
         return True
 
     def joint_control_mit(self, pos: List[float]) -> bool:
         return self.joint_control(pos)
 
     def control_gripper(self, pos: float, force: float = 0.5):
-        self._gripper_pos = float(max(0.0, min(2.0, pos)))
-        logger.debug(f"[MockS1Arm] Gripper set to {self._gripper_pos}")
+        self._pos[6] = float(max(self._GRIPPER_LIMIT[0], min(self._GRIPPER_LIMIT[1], pos)))
+        logger.debug(f"[MockS1Arm] Gripper set to {self._pos[6]}")
 
     def get_pos(self) -> List[float]:
         return self._pos.copy()
@@ -219,6 +229,7 @@ class _MockS1Arm:
 
     def set_zero_position(self):
         self._pos = [0.0] * 7
+        self._pos[6] = 0.0  # gripper closed at zero position
         logger.info("[MockS1Arm] Zero position set.")
 
     def set_end_zero_position(self):
@@ -230,7 +241,6 @@ class _MockS1Arm:
         logger.info("[MockS1Arm] Gravity compensation active (mock).")
 
     def check_collision(self, qpos: List[float]) -> bool:
-        # Mock: no collision
         return False
 
     def close(self):
@@ -263,4 +273,151 @@ else:
     S1_slover = _MockS1Slover
     Arm_Search = _mock_arm_search
 
-__all__ = ["S1_arm", "S1_slover", "control_mode", "Arm_Search"]
+
+# ---------------------------------------------------------------------------
+# Unified Adapter classes (compatible with OpenRobotDemo skill interfaces)
+# ---------------------------------------------------------------------------
+class YHRGAdapter:
+    """
+    Unified adapter for YHRG S1 arm, compatible with FrankaMujocoAdapter interface.
+    Supports both real hardware and mock modes.
+    """
+
+    def __init__(
+        self,
+        mode: str = "mock",
+        dev: str = "/dev/ttyUSB0",
+        end_effector: str = "gripper",
+    ):
+        self.mode = mode
+        self.dev = dev
+        self.end_effector = end_effector
+        self._enabled = False
+
+        if mode == "real":
+            if not _SDK_AVAILABLE:
+                logger.warning(
+                    "[YHRGAdapter] Real mode requested but S1_SDK is not available. "
+                    "Falling back to mock mode."
+                )
+                self.mode = "mock"
+            else:
+                self._arm = _RealS1Arm(
+                    mode=_RealControlMode.only_real,
+                    dev=dev,
+                    end_effector=end_effector,
+                )
+                logger.info("[YHRGAdapter] Real S1 arm initialized on %s", dev)
+
+        if self.mode == "mock":
+            self._arm = _MockS1Arm(
+                mode=control_mode.only_real,
+                dev=dev,
+                end_effector=end_effector,
+            )
+            logger.info("[YHRGAdapter] Mock S1 arm initialized")
+
+    def enable(self):
+        self._enabled = True
+        return self._arm.enable()
+
+    def disable(self):
+        self._enabled = False
+        return self._arm.disable()
+
+    def get_pos(self) -> List[float]:
+        return self._arm.get_pos()
+
+    def get_vel(self) -> List[float]:
+        return self._arm.get_vel()
+
+    def get_tau(self) -> List[float]:
+        return self._arm.get_tau()
+
+    def get_temp(self) -> List[float]:
+        return self._arm.get_temp()
+
+    def joint_control(self, pos: List[float]) -> bool:
+        # S1 joint_control expects 6 DOFs; truncate if 7 are given
+        pos_6 = pos[:6] if len(pos) >= 6 else list(pos) + [0.0] * (6 - len(pos))
+        return self._arm.joint_control(pos_6)
+
+    def joint_control_mit(self, pos: List[float]) -> bool:
+        return self._arm.joint_control_mit(pos)
+
+    def control_gripper(self, pos: float, force: float = 0.5):
+        return self._arm.control_gripper(pos, force)
+
+    def set_zero_position(self):
+        return self._arm.set_zero_position()
+
+    def set_end_zero_position(self):
+        return self._arm.set_end_zero_position()
+
+    def gravity(self, return_tau: bool = False):
+        return self._arm.gravity(return_tau=return_tau)
+
+    def check_collision(self, qpos: List[float]) -> bool:
+        return self._arm.check_collision(qpos)
+
+    def close(self):
+        return self._arm.close()
+
+
+class YHRGKinematics:
+    """
+    Unified kinematics solver for YHRG S1, compatible with FrankaMujocoKinematics interface.
+    """
+
+    def __init__(self, end_effector_offset: List[float] = None):
+        self.offset = end_effector_offset or [0.0, 0.0, 0.0]
+        if _SDK_AVAILABLE:
+            self._solver = _RealS1Slover(self.offset)
+        else:
+            self._solver = _MockS1Slover(self.offset)
+
+    def _ensure_6dof(self, joints: List[float]) -> List[float]:
+        if len(joints) > 6:
+            logger.warning(
+                "[YHRGKinematics] Received %d joints, truncating to 6-DOF for S1 compatibility.",
+                len(joints),
+            )
+            return joints[:6]
+        if len(joints) < 6:
+            return list(joints) + [0.0] * (6 - len(joints))
+        return joints
+
+    def forward_quat(self, joints: List[float]) -> List[float]:
+        joints_6 = self._ensure_6dof(joints)
+        return self._solver.forward_quat(joints_6)
+
+    def forward_eular(self, joints: List[float]) -> List[float]:
+        joints_6 = self._ensure_6dof(joints)
+        return self._solver.forward_eular(joints_6)
+
+    def inverse_quat(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
+        if joint_positions is not None:
+            joint_positions = self._ensure_6dof(joint_positions)
+        result = self._solver.inverse_quat(target_pose, joint_positions)
+        # Return 7 values for backward compatibility with 7-DOF-centric code
+        if result is not None:
+            return list(result) + [0.0]
+        return None
+
+    def inverse_eular(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
+        if joint_positions is not None:
+            joint_positions = self._ensure_6dof(joint_positions)
+        result = self._solver.inverse_eular(target_pose, joint_positions)
+        if result is not None:
+            return list(result) + [0.0]
+        return None
+
+
+__all__ = [
+    "S1_arm",
+    "S1_slover",
+    "control_mode",
+    "Arm_Search",
+    "YHRGAdapter",
+    "YHRGKinematics",
+]
