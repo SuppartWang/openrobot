@@ -33,14 +33,14 @@ _project_root = os.path.join(os.path.dirname(__file__), "..")
 load_dotenv(Path(_project_root) / ".env")
 sys.path.insert(0, _project_root)
 
-from openrobot_demo.agent.planner import LLMPlanner
-from openrobot_demo.agent.skill_router import SkillRouter
+from openrobot_demo.agent import BDIAgent, LLMPlanner, SkillRouter
 from openrobot_demo.dual_arm.controller import DualArmController, ArmSide
 from openrobot_demo.dual_arm.fabric_skills import FabricManipulationSkill
 from openrobot_demo.experience.library import ExperienceLibrary
 from openrobot_demo.experience.retriever import ExperienceRetriever
 from openrobot_demo.experience.seed import seed_fabric_experiences
 from openrobot_demo.persistence.db import EpisodeRecorder, init_database
+from openrobot_demo.perception.vlm_cognition import VLMCognitionSensor
 from openrobot_demo.sensors import (
     ProprioceptionSensor,
     RealSenseRGBSensor,
@@ -185,103 +185,45 @@ def run_fabric_demo(
     router.register(fabric_skill)
     router.register(vla_executor)
 
-    # 5. Planner (with experience-aware prompt and schema-aware skill descriptions)
-    print("\n[5/6] Starting ReAct planner...")
+    # 5. VLM Cognition Sensor (feeds from RGB sensor)
+    vlm_sensor = VLMCognitionSensor(
+        source_id="vlm_cognition",
+        camera_source_id="rs_d435i_rgb",
+    )
+    sensors.append(vlm_sensor)
+
+    # 6. BDI Agent (replaces manual ReAct loop)
+    print("\n[5/6] Initializing BDI Agent...")
     exp_retriever = ExperienceRetriever(exp_lib)
     planner = LLMPlanner(
         experience_retriever=exp_retriever,
         skill_router=router,
     )
-    planner.start_task(instruction)
+    agent = BDIAgent(
+        planner=planner,
+        skill_router=router,
+        world_model=world,
+        max_total_steps=30,
+    )
     print(f"      Instruction: {instruction}")
-    print(f"      Skills registered: {router.list_skills()}")
+    print(f"      Skills: {router.list_skills()}")
     print(f"      Tool descriptions auto-generated from schemas.")
 
-    # 6. ReAct loop
-    print("\n[6/6] Executing ReAct loop...\n")
-    max_steps = 20
-    step_idx = 0
-    finished = False
-
+    # 7. Execute via BDI Agent
+    print("\n[6/6] BDI Agent executing...\n")
     try:
-        for step_idx in range(max_steps):
-            # Update world model from sensors
-            for sensor in sensors:
-                if sensor.is_available():
-                    try:
-                        reading = sensor.capture()
-                        world.ingest(reading)
-                    except Exception as exc:
-                        logger.debug("Sensor %s capture failed: %s", sensor.source_id, exc)
-
-            state_summary = world.build_state_summary()
-            print(f"\n  Step {step_idx + 1}/{max_steps}")
-            print(f"    📊 World state:\n{state_summary[:300]}...")
-            print("    ⏳ Planner thinking...")
-
-            action = planner.next_action(state_summary)
-            wait_time = 0.1  # mock timing
-
-            if recorder:
-                recorder.record_step(
-                    step_idx=step_idx,
-                    thought=action.get("thought", ""),
-                    action={
-                        "action": action.get("action"),
-                        "skill": action.get("skill"),
-                        "args": action.get("args"),
-                    },
-                    state_summary=state_summary,
-                    wait_time_s=round(wait_time, 3),
-                )
-
-            if action.get("action") == "finish":
-                print(f"\n    ✅ Task finished: {action.get('thought', '')}")
-                finished = True
-                break
-
-            skill_name = action.get("skill")
-            raw_args = action.get("args", {})
-            print(f"    💭 {action.get('thought', '')}")
-            print(f"    🔧 Skill: {skill_name}")
-
-            # Resolve args from context
-            args = router._resolve_args(raw_args)
-            if skill_name == "fabric_manipulation":
-                # Fabric skill handles its own experience loading internally
-                result = fabric_skill.execute(**args)
-            elif skill_name in router._skills:
-                skill = router._skills[skill_name]
-                result = skill.execute(**args)
-            else:
-                print(f"    ⚠️ Unknown skill: {skill_name}")
-                result = {"success": False, "message": f"Unknown skill: {skill_name}"}
-
-            if recorder:
-                recorder.record_step_result(
-                    step_idx=step_idx,
-                    skill_name=skill_name or "unknown",
-                    success=result.get("success", False),
-                    message=result.get("message", ""),
-                    result=result,
-                )
-                recorder.record_state_snapshot(step_idx, world.to_dict())
-
-            if result.get("success", False):
-                print(f"    ✅ {result.get('message', 'OK')}")
-            else:
-                print(f"    ❌ {result.get('message', 'Failed')}")
-                # On failure, could trigger experience auto-refinement here
-                break
-
-            # Refresh context
-            router._update_context(skill_name, result)
-
-        else:
-            print(f"\n⚠️ Reached max steps ({max_steps}).")
-
+        summary = agent.execute(instruction, sensors=sensors)
+        finished = summary["success"]
+        print(f"\n{'='*60}")
+        print(f"  BDI Agent finished: success={finished}")
+        print(f"  Steps: {summary['total_steps']}")
+        print(f"  Time: {summary['elapsed_time_s']:.1f}s")
+        if summary.get("goal_tree"):
+            print(f"  Goal tree depth: {len(summary['goal_tree'].get('sub_goals', []))}")
+        print(f"{'='*60}")
     except KeyboardInterrupt:
         print("\n\n👋 Interrupted by user.")
+        finished = False
     finally:
         print("\n[Cleanup] Disabling arms and releasing resources...")
         dual_arm.disable()
@@ -300,7 +242,7 @@ def run_fabric_demo(
     for obj_id, obj in world.objects.items():
         print(f"   {obj_id}: pos={obj.position}, relations={obj.relations}")
 
-    return {"success": finished, "steps": step_idx + 1}
+    return {"success": finished, "steps": agent._total_steps}
 
 
 def main():

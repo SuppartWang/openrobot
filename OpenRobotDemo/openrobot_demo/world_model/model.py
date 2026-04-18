@@ -191,6 +191,60 @@ class WorldModel:
         else:
             logger.debug("[WorldModel] Audio: data received")
 
+    def _update_from_vlm_cognition(self, data: PerceptionData):
+        """Ingest structured VLM cognition into the world model."""
+        payload = data.payload
+        if not isinstance(payload, dict):
+            logger.warning("[WorldModel] VLM cognition payload is not a dict: %s", type(payload))
+            return
+
+        # Scene description logging
+        scene_desc = payload.get("scene_description", "")
+        if scene_desc:
+            logger.info("[WorldModel] VLM scene: %s", scene_desc)
+
+        # Update objects from cognition
+        for obj in payload.get("objects", []):
+            obj_id = obj.get("id", f"cog_obj_{int(time.time() * 1000)}")
+            from openrobot_demo.world_model.model import ObjectDesc
+            existing = self.objects.get(obj_id)
+            position = obj.get("estimated_position")
+            relations = {}
+            for rel in payload.get("spatial_relations", []):
+                if rel.get("subject") == obj_id:
+                    relations[rel.get("relation", "related_to")] = rel.get("object", "unknown")
+
+            if existing:
+                existing.object_type = obj.get("type", existing.object_type)
+                existing.color = obj.get("color", existing.color)
+                existing.position = position if position else existing.position
+                existing.state = obj.get("state", existing.state if hasattr(existing, "state") else "unknown")
+                existing.confidence = obj.get("confidence", existing.confidence)
+                existing.relations.update(relations)
+                existing.last_seen = time.time()
+            else:
+                self.add_or_update_object(
+                    ObjectDesc(
+                        object_id=obj_id,
+                        object_type=obj.get("type", "unknown"),
+                        color=obj.get("color"),
+                        position=position,
+                        confidence=obj.get("confidence", 1.0),
+                        relations=relations,
+                    )
+                )
+
+        # Log anomalies
+        for anomaly in payload.get("anomalies", []):
+            logger.warning("[WorldModel] Anomaly detected: %s (severity=%s)",
+                           anomaly.get("description", ""), anomaly.get("severity", "unknown"))
+
+        # Log affordances
+        for aff in payload.get("affordances", []):
+            obj_id = aff.get("object_id", "unknown")
+            actions = aff.get("possible_actions", [])
+            logger.debug("[WorldModel] Affordances for %s: %s", obj_id, actions)
+
     # ------------------------------------------------------------------
     # Object / spatial API
     # ------------------------------------------------------------------
