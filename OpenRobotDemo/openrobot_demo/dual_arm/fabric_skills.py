@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional
 
-from openrobot_demo.skills.base import SkillInterface
+from openrobot_demo.skills.base import SkillInterface, SkillSchema, ParamSchema, ResultSchema
 from openrobot_demo.dual_arm.controller import DualArmController, ArmSide
 from openrobot_demo.experience.library import ExperienceLibrary
 from openrobot_demo.experience.retriever import ExperienceRetriever
@@ -27,6 +27,42 @@ class FabricManipulationSkill(SkillInterface):
     """
 
     name = "fabric_manipulation"
+
+    @property
+    def schema(self) -> SkillSchema:
+        return SkillSchema(
+            description="Manipulate cylindrical fabric with a dual-arm setup using experience-guided parameters.",
+            parameters=[
+                ParamSchema(
+                    name="operation",
+                    type="str",
+                    description="Operation to perform. One of: 'pinch_edge', 'lift', 'insert', 'hold_wait', 'withdraw'.",
+                    required=True,
+                    example="pinch_edge",
+                ),
+                ParamSchema(name="fabric_center", type="list", description="[x, y, z] of fabric tube center in base frame.", required=False, default=None),
+                ParamSchema(name="fabric_diameter_m", type="float", description="Fabric tube outer diameter in meters.", required=False, default=0.08),
+                ParamSchema(name="height_m", type="float", description="Height to lift in meters (for 'lift').", required=False, default=0.10),
+                ParamSchema(name="plate_center", type="list", description="[x, y, z] of support plate top center (for 'insert').", required=False, default=None),
+                ParamSchema(name="plate_height_m", type="float", description="Support plate height in meters.", required=False, default=0.05),
+                ParamSchema(name="insert_depth_m", type="float", description="Insertion depth beyond plate top in meters.", required=False, default=0.06),
+                ParamSchema(name="wait_seconds", type="float", description="Hold time in seconds (for 'hold_wait').", required=False, default=5.0),
+                ParamSchema(name="lift_height_m", type="float", description="Lift height for withdrawal in meters.", required=False, default=0.10),
+            ],
+            returns=[
+                ResultSchema(name="success", type="bool", description="Whether operation succeeded."),
+                ResultSchema(name="message", type="str", description="Status message."),
+            ],
+            dependencies=["dual_arm", "experience_library"],
+            preconditions=["dual arm controller must be initialized and enabled"],
+            postconditions=["fabric state updated in world model"],
+            examples=[
+                {
+                    "input": {"operation": "pinch_edge", "fabric_center": [0.30, 0.0, 0.02], "fabric_diameter_m": 0.08},
+                    "output": {"success": True, "message": "Pinch complete."},
+                },
+            ],
+        )
 
     def __init__(
         self,

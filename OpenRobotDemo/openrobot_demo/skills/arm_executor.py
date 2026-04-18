@@ -5,7 +5,7 @@ import logging
 from typing import Any, Dict, List
 import numpy as np
 
-from openrobot_demo.skills.base import SkillInterface
+from openrobot_demo.skills.base import SkillInterface, SkillSchema, ParamSchema, ResultSchema
 from openrobot_demo.hardware.yhrg_adapter import S1_arm, S1_slover, control_mode
 from openrobot_demo.control.safety_gateway import SafetyGateway
 from openrobot_demo.control.interpolator import JointSpaceInterpolator
@@ -34,6 +34,61 @@ class ArmMotionExecutor(SkillInterface):
     @property
     def name(self) -> str:
         return "arm_motion_executor"
+
+    @property
+    def schema(self) -> SkillSchema:
+        return SkillSchema(
+            description="Execute arm motion commands: joint position, cartesian pose, or gripper control.",
+            parameters=[
+                ParamSchema(
+                    name="command_type",
+                    type="str",
+                    description="Type of motion command. Must be one of: 'joint', 'cartesian', 'gripper'.",
+                    required=True,
+                    example="cartesian",
+                ),
+                ParamSchema(
+                    name="target_values",
+                    type="list",
+                    description="Target values. For 'joint': list of n_dof angles. For 'cartesian': [x,y,z,qx,qy,qz,qw]. For 'gripper': [position, force].",
+                    required=True,
+                    example=[0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0],
+                ),
+                ParamSchema(
+                    name="speed",
+                    type="float",
+                    description="Motion speed factor (0.0 - 2.0). 1.0 is normal speed.",
+                    required=False,
+                    default=1.0,
+                ),
+                ParamSchema(
+                    name="use_interpolation",
+                    type="bool",
+                    description="Whether to use smooth joint-space interpolation.",
+                    required=False,
+                    default=True,
+                ),
+            ],
+            returns=[
+                ResultSchema(name="success", type="bool", description="Whether motion succeeded."),
+                ResultSchema(name="message", type="str", description="Status message."),
+                ResultSchema(name="actual_reached_pos", type="list", description="Final joint positions after motion."),
+                ResultSchema(name="execution_time_ms", type="int", description="Motion execution time in milliseconds."),
+            ],
+            dependencies=["arm"],
+            preconditions=["arm must be enabled"],
+            postconditions=["arm has reached (or attempted to reach) the target configuration"],
+            examples=[
+                {
+                    "input": {"command_type": "gripper", "target_values": [0.0, 0.5]},
+                    "output": {"success": True, "message": "Gripper set to 0.0."},
+                },
+                {
+                    "input": {"command_type": "cartesian", "target_values": [0.3, 0.0, 0.2, 0.0, 0.0, 0.0, 1.0], "speed": 0.5},
+                    "output": {"success": True, "message": "Joint motion executed."},
+                },
+            ],
+        )
 
     def enable(self):
         if not self._enabled:

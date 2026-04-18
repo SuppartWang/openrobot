@@ -2,7 +2,7 @@
 
 import logging
 from typing import Any, Dict, List
-from openrobot_demo.skills.base import SkillInterface
+from openrobot_demo.skills.base import SkillInterface, SkillSchema, ParamSchema, ResultSchema
 from openrobot_demo.hardware.yhrg_adapter import S1_arm, S1_slover, control_mode
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,32 @@ class ArmStateReader(SkillInterface):
     @property
     def name(self) -> str:
         return "arm_state_reader"
+
+    @property
+    def schema(self) -> SkillSchema:
+        return SkillSchema(
+            description="Read the current state of the robot arm (joints, velocities, torques, temperatures, end-effector pose).",
+            parameters=[
+                ParamSchema(
+                    name="fields",
+                    type="list",
+                    description="List of fields to read. Options: 'pos', 'vel', 'tau', 'temp'. Default reads all.",
+                    required=False,
+                    default=None,
+                    example=["pos", "vel"],
+                ),
+            ],
+            returns=[
+                ResultSchema(name="success", type="bool", description="Whether read succeeded."),
+                ResultSchema(name="message", type="str", description="Status message."),
+                ResultSchema(name="joint_positions", type="list", description="Current joint positions (radians)."),
+                ResultSchema(name="joint_velocities", type="list", description="Current joint velocities."),
+                ResultSchema(name="joint_torques", type="list", description="Current joint torques."),
+                ResultSchema(name="temperatures", type="list", description="Motor temperatures (°C)."),
+                ResultSchema(name="end_effector_pose", type="list", description="EE pose [x, y, z, qx, qy, qz, qw]."),
+            ],
+            dependencies=["arm"],
+        )
 
     def execute(self, fields: List[str] = None, **kwargs) -> Dict[str, Any]:
         fields = fields or ["pos", "vel", "tau", "temp"]

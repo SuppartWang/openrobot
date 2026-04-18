@@ -2,6 +2,8 @@
 
 This allows OpenRobotDemo skills to control the MuJoCo Franka model without
 modifying the skill code.
+
+Implements ManipulatorInterface for unified robot abstraction.
 """
 
 import logging
@@ -9,17 +11,19 @@ from typing import List, Optional
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
+from openrobot_demo.hardware.manipulator_interface import ManipulatorInterface
+
 logger = logging.getLogger(__name__)
 
 
-class FrankaMujocoAdapter:
+class FrankaMujocoAdapter(ManipulatorInterface):
     """Wraps a MuJoCo model/data pair to control the Franka arm."""
 
     def __init__(self, model, data, end_effector: str = "gripper"):
         import mujoco
-        self.model = model
-        self.data = data
-        self.end_effector = end_effector
+        self._model = model
+        self._data = data
+        self._end_effector = end_effector
         self._enabled = False
         self._joint_names = [f"joint{i}" for i in range(1, 8)]
         self._joint_ids = [
@@ -31,7 +35,22 @@ class FrankaMujocoAdapter:
         # actuators for the 7 arm joints + 2 finger joints
         self._nu_arm = 7
         self._nu_fingers = 2
+        self._solver = FrankaMujocoKinematics(model, data, end_effector_offset=[0.0, 0.0, 0.0])
 
+    # ------------------------------------------------------------------
+    # RobotInterface properties
+    # ------------------------------------------------------------------
+    @property
+    def robot_id(self) -> str:
+        return "franka_mujoco"
+
+    @property
+    def dof(self) -> int:
+        return 7
+
+    # ------------------------------------------------------------------
+    # Legacy API (preserved for backward compatibility)
+    # ------------------------------------------------------------------
     def enable(self):
         self._enabled = True
         return True
@@ -41,15 +60,13 @@ class FrankaMujocoAdapter:
         return True
 
     def get_pos(self) -> List[float]:
-        return [float(self.data.qpos[adr]) for adr in self._qpos_adr]
+        return [float(self._data.qpos[adr]) for adr in self._qpos_adr]
 
     def get_vel(self) -> List[float]:
-        # qvel addresses from jnt_dofadr for hinge joints (1-dof each)
-        return [float(self.data.qvel[self.model.jnt_dofadr[jid]]) for jid in self._joint_ids]
+        return [float(self._data.qvel[self._model.jnt_dofadr[jid]]) for jid in self._joint_ids]
 
     def get_tau(self) -> List[float]:
-        # actuator forces for first 7 actuators
-        return [float(self.data.actuator_force[i]) for i in range(self._nu_arm)]
+        return [float(self._data.actuator_force[i]) for i in range(self._nu_arm)]
 
     def get_temp(self) -> List[float]:
         return [0.0] * self._nu_arm
@@ -57,26 +74,19 @@ class FrankaMujocoAdapter:
     def joint_control(self, pos: List[float]) -> bool:
         if len(pos) < self._nu_arm:
             pos = list(pos) + [0.0] * (self._nu_arm - len(pos))
-        # Respect ctrlrange
         for i in range(self._nu_arm):
-            lo, hi = self.model.actuator_ctrlrange[i]
+            lo, hi = self._model.actuator_ctrlrange[i]
             pos[i] = float(np.clip(pos[i], lo, hi))
-        self.data.ctrl[:self._nu_arm] = pos[:self._nu_arm]
+        self._data.ctrl[:self._nu_arm] = pos[:self._nu_arm]
         return True
 
     def joint_control_mit(self, pos: List[float]) -> bool:
         return self.joint_control(pos)
 
-    def control_gripper(self, pos: float, force: float = 0.5):
-        # finger_joint1 and finger_joint2 are actuators 7 and 8
-        g = float(np.clip(pos, 0.0, 0.04))
-        self.data.ctrl[self._nu_arm] = g
-        self.data.ctrl[self._nu_arm + 1] = g
-
     def set_zero_position(self):
         for adr in self._qpos_adr:
-            self.data.qpos[adr] = 0.0
-        self.data.ctrl[:self._nu_arm] = 0.0
+            self._data.qpos[adr] = 0.0
+        self._data.ctrl[:self._nu_arm] = 0.0
 
     def set_end_zero_position(self):
         pass
@@ -88,7 +98,64 @@ class FrankaMujocoAdapter:
     def check_collision(self, qpos: List[float]) -> bool:
         return False
 
-    def close(self):
+    # ------------------------------------------------------------------
+    # ManipulatorInterface implementation
+    # ------------------------------------------------------------------
+    def forward_kinematics(self, joint_positions: np.ndarray) -> np.ndarray:
+        return np.array(self._solver.forward_quat(joint_positions.tolist()), dtype=np.float32)
+
+    def inverse_kinematics(
+        self,
+        target_pose: np.ndarray,
+        current_joints: Optional[np.ndarray] = None,
+    ) -> Optional[np.ndarray]:
+        q0 = current_joints.tolist() if current_joints is not None else None
+        result = self._solver.inverse_quat(target_pose.tolist(), q0)
+        return np.array(result, dtype=np.float32) if result is not None else None
+
+    def get_joint_positions(self) -> np.ndarray:
+        return np.array(self.get_pos(), dtype=np.float32)
+
+    def get_joint_velocities(self) -> np.ndarray:
+        return np.array(self.get_vel(), dtype=np.float32)
+
+    def get_joint_torques(self) -> np.ndarray:
+        return np.array(self.get_tau(), dtype=np.float32)
+
+    def get_end_effector_pose(self) -> np.ndarray:
+        return self.forward_kinematics(self.get_joint_positions())
+
+    def get_gripper_width(self) -> float:
+        # Franka fingers: actuator 7 and 8 control widths; approximate
+        f1 = float(self._data.ctrl[self._nu_arm])
+        f2 = float(self._data.ctrl[self._nu_arm + 1])
+        return (f1 + f2) / 2.0
+
+    def set_joint_positions(self, positions: np.ndarray, **kwargs) -> bool:
+        pos_list = positions.tolist() if hasattr(positions, "tolist") else list(positions)
+        return self.joint_control(pos_list)
+
+    def set_cartesian_pose(self, pose: np.ndarray, **kwargs) -> bool:
+        q = self.inverse_kinematics(pose, current_joints=self.get_joint_positions())
+        if q is None:
+            logger.error("[FrankaMujocoAdapter] IK failed for cartesian pose %s", pose)
+            return False
+        return self.set_joint_positions(q, **kwargs)
+
+    def control_gripper(self, position: float, force: Optional[float] = None) -> bool:
+        g = float(np.clip(position, 0.0, 0.04))
+        self._data.ctrl[self._nu_arm] = g
+        self._data.ctrl[self._nu_arm + 1] = g
+        return True
+
+    def reset(self) -> bool:
+        self.set_zero_position()
+        return True
+
+    def is_ready(self) -> bool:
+        return self._enabled
+
+    def close(self) -> None:
         self.disable()
 
 

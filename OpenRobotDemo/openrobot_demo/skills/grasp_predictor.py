@@ -5,7 +5,7 @@ from typing import Any, Dict
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
-from openrobot_demo.skills.base import SkillInterface
+from openrobot_demo.skills.base import SkillInterface, SkillSchema, ParamSchema, ResultSchema
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +16,28 @@ class GraspPointPredictor(SkillInterface):
     @property
     def name(self) -> str:
         return "grasp_point_predictor"
+
+    @property
+    def schema(self) -> SkillSchema:
+        return SkillSchema(
+            description="Predict a grasp pose (position + orientation) and pre-grasp approach pose for a given object type and 3D position.",
+            parameters=[
+                ParamSchema(name="object_pose_base", type="list", description="Object 3D pose in base frame [x, y, z, qx, qy, qz, qw] or [x, y, z].", required=True),
+                ParamSchema(name="object_type", type="str", description="Object type: 'box', 'cube', 'cylinder', 'bottle', 'sphere', etc.", required=False, default="unknown"),
+                ParamSchema(name="gripper_type", type="str", description="Gripper type: 'parallel', 'suction', etc.", required=False, default="parallel"),
+            ],
+            returns=[
+                ResultSchema(name="success", type="bool", description="Whether prediction succeeded."),
+                ResultSchema(name="message", type="str", description="Status message."),
+                ResultSchema(name="grasp_pose", type="list", description="Grasp pose [x, y, z, qx, qy, qz, qw]."),
+                ResultSchema(name="pre_grasp_pose", type="list", description="Pre-grasp approach pose [x, y, z, qx, qy, qz, qw]."),
+                ResultSchema(name="approach_vector", type="list", description="Approach direction vector [dx, dy, dz]."),
+                ResultSchema(name="gripper_width", type="float", description="Recommended gripper aperture (meters)."),
+            ],
+            dependencies=["arm"],
+            preconditions=["object 3D pose must be known"],
+            postconditions=["grasp pose is computed and available for arm motion executor"],
+        )
 
     def execute(self,
                 object_pose_base: list,

@@ -106,6 +106,18 @@ class WorldModel:
             self._update_from_pointcloud(data)
         elif data.modality == "tactile":
             self._update_from_tactile(data)
+        elif data.modality == "imu":
+            self._update_from_imu(data)
+        elif data.modality == "wrench":
+            self._update_from_wrench(data)
+        elif data.modality == "lidar":
+            self._update_from_lidar(data)
+        elif data.modality == "ultrasonic":
+            self._update_from_ultrasonic(data)
+        elif data.modality == "odometry":
+            self._update_from_odometry(data)
+        elif data.modality == "audio":
+            self._update_from_audio(data)
         else:
             logger.debug("[WorldModel] Unhandled modality: %s", data.modality)
 
@@ -142,6 +154,42 @@ class WorldModel:
             in_contact,
             total_force,
         )
+
+    def _update_from_imu(self, data: PerceptionData):
+        payload = data.payload
+        acc = payload.get("acceleration")
+        gyro = payload.get("angular_velocity")
+        logger.debug("[WorldModel] IMU: acc=%s, gyro=%s", acc, gyro)
+
+    def _update_from_wrench(self, data: PerceptionData):
+        payload = data.payload
+        force = payload.get("force")
+        torque = payload.get("torque")
+        logger.debug("[WorldModel] Wrench: force=%s, torque=%s", force, torque)
+
+    def _update_from_lidar(self, data: PerceptionData):
+        payload = data.payload
+        num_beams = len(payload.get("ranges", []))
+        logger.debug("[WorldModel] LiDAR: %d beams", num_beams)
+
+    def _update_from_ultrasonic(self, data: PerceptionData):
+        payload = data.payload
+        dist = payload.get("distance_m")
+        logger.debug("[WorldModel] Ultrasonic: distance=%.3fm", dist)
+
+    def _update_from_odometry(self, data: PerceptionData):
+        payload = data.payload
+        pose = payload.get("pose")
+        if pose is not None:
+            self.spatial_memory.robot_position = pose[:3] if len(pose) >= 3 else pose
+        logger.debug("[WorldModel] Odometry: pose=%s", pose)
+
+    def _update_from_audio(self, data: PerceptionData):
+        payload = data.payload
+        if isinstance(payload, np.ndarray):
+            logger.debug("[WorldModel] Audio: %d samples", len(payload))
+        else:
+            logger.debug("[WorldModel] Audio: data received")
 
     # ------------------------------------------------------------------
     # Object / spatial API

@@ -46,6 +46,8 @@ from openrobot_demo.sensors import (
     RealSenseRGBSensor,
     RealSenseDepthSensor,
     TactileSensor,
+    IMUSensor,
+    WrenchSensor,
 )
 from openrobot_demo.skills import (
     ArmMotionExecutor,
@@ -183,11 +185,17 @@ def run_fabric_demo(
     router.register(fabric_skill)
     router.register(vla_executor)
 
-    # 5. Planner
+    # 5. Planner (with experience-aware prompt and schema-aware skill descriptions)
     print("\n[5/6] Starting ReAct planner...")
-    planner = LLMPlanner()
+    exp_retriever = ExperienceRetriever(exp_lib)
+    planner = LLMPlanner(
+        experience_retriever=exp_retriever,
+        skill_router=router,
+    )
     planner.start_task(instruction)
     print(f"      Instruction: {instruction}")
+    print(f"      Skills registered: {router.list_skills()}")
+    print(f"      Tool descriptions auto-generated from schemas.")
 
     # 6. ReAct loop
     print("\n[6/6] Executing ReAct loop...\n")

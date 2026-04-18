@@ -41,6 +41,7 @@ from openrobot_demo.sensors import (
     PointCloudSensor,
     ProprioceptionSensor,
     TactileSensor,
+    IMUSensor,
 )
 from openrobot_demo.world_model import WorldModel, ObjectDesc
 
@@ -159,6 +160,7 @@ def run_simulation(recorder: EpisodeRecorder = None, instruction: str = "捡起�
         PointCloudSensor(source_id=cam_name, width=640, height=480, fovy=45.0, max_depth=2.0, mujoco_model=model, mujoco_data=data),
         ProprioceptionSensor(source_id="franka_arm", arm_adapter=arm_adapter, kinematics_solver=arm_kinematics),
         TactileSensor(source_id="gripper", body_names=["gripper_base", "left_finger", "right_finger"], mujoco_model=model, mujoco_data=data),
+        IMUSensor(source_id="franka_imu", mujoco_model=model, mujoco_data=data, body_name="gripper_base"),
     ]
 
     # Seed world model with initial proprioception
@@ -167,7 +169,7 @@ def run_simulation(recorder: EpisodeRecorder = None, instruction: str = "捡起�
 
     print(f"\n🤖 User instruction: {instruction}")
 
-    planner = LLMPlanner()
+    planner = LLMPlanner(skill_router=router)
     planner.start_task(instruction)
 
     # Compute ground-truth hand-eye calibration from MuJoCo

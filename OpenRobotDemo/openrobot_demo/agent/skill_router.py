@@ -1,7 +1,15 @@
-"""SkillRouter: executes a planned sequence of skills with context substitution."""
+"""SkillRouter: executes a planned sequence of skills with context substitution.
+
+Enhancements over v1:
+- Schema-aware argument validation before execution
+- Auto-generate OpenAI-compatible tool descriptions from skill schemas
+- Dynamic skill discovery and dependency checking
+- Support for parallel skill execution (future)
+"""
 
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+
 from openrobot_demo.skills.base import SkillInterface
 
 logger = logging.getLogger(__name__)
@@ -16,8 +24,78 @@ class SkillRouter:
         self._skills[skill.name] = skill
         logger.info(f"[SkillRouter] Registered skill: {skill.name}")
 
+    def list_skills(self) -> List[str]:
+        return list(self._skills.keys())
+
+    def get_skill(self, name: str) -> Optional[SkillInterface]:
+        return self._skills.get(name)
+
+    def get_tool_descriptions(self) -> List[Dict[str, Any]]:
+        """Return OpenAI-compatible tool descriptions for all registered skills."""
+        return [skill.to_tool_description() for skill in self._skills.values()]
+
+    def get_skill_schemas_text(self) -> str:
+        """Return a human-readable description of all skills for LLM prompts."""
+        lines = ["Available Skills:"]
+        for name, skill in sorted(self._skills.items()):
+            schema = skill.schema
+            lines.append(f"\n  {name}: {schema.description}")
+            if schema.parameters:
+                lines.append("    Parameters:")
+                for p in schema.parameters:
+                    req = "required" if p.required else f"optional, default={p.default}"
+                    lines.append(f"      - {p.name} ({p.type}): {p.description} [{req}]")
+            if schema.returns:
+                lines.append("    Returns:")
+                for r in schema.returns:
+                    lines.append(f"      - {r.name} ({r.type}): {r.description}")
+            if schema.preconditions:
+                lines.append(f"    Preconditions: {'; '.join(schema.preconditions)}")
+            if schema.postconditions:
+                lines.append(f"    Postconditions: {'; '.join(schema.postconditions)}")
+        return "\n".join(lines)
+
+    def get_state_changes_text(self) -> str:
+        """Return state change descriptions for causal reasoning."""
+        lines = ["Skill State Changes:"]
+        for name, skill in sorted(self._skills.items()):
+            lines.append(skill.get_state_change_description())
+        return "\n".join(lines)
+
+    def validate_plan(self, plan: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Validate a plan against skill schemas before execution.
+
+        Returns {"valid": bool, "errors": [str]}.
+        """
+        errors = []
+        for idx, step in enumerate(plan):
+            skill_name = step.get("skill")
+            args = step.get("args", {})
+
+            if skill_name not in self._skills:
+                errors.append(f"Step {idx}: unknown skill '{skill_name}'")
+                continue
+
+            skill = self._skills[skill_name]
+            try:
+                skill.validate_args(args)
+            except ValueError as exc:
+                errors.append(f"Step {idx} ({skill_name}): {exc}")
+
+        return {"valid": len(errors) == 0, "errors": errors}
+
     def execute_plan(self, plan: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Execute a list of {skill, args} steps sequentially."""
+        """Execute a list of {skill, args} steps sequentially with validation."""
+        # Pre-validate
+        validation = self.validate_plan(plan)
+        if not validation["valid"]:
+            logger.error("[SkillRouter] Plan validation failed: %s", validation["errors"])
+            return {
+                "success": False,
+                "message": f"Plan validation failed: {validation['errors']}",
+                "results": [],
+            }
+
         results = []
         for idx, step in enumerate(plan):
             skill_name = step.get("skill")
@@ -39,6 +117,8 @@ class SkillRouter:
 
             skill = self._skills[skill_name]
             try:
+                # Schema-aware validation
+                args = skill.validate_args(args)
                 result = skill.execute(**args)
             except Exception as e:
                 logger.exception(f"Skill {skill_name} execution failed")
@@ -55,6 +135,26 @@ class SkillRouter:
             self._update_context(skill_name, result)
 
         return {"success": True, "message": "Plan executed successfully.", "results": results}
+
+    def execute_single(self, skill_name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute a single skill step with context resolution and validation."""
+        if skill_name not in self._skills:
+            return {"success": False, "message": f"Unknown skill: {skill_name}"}
+
+        args = self._resolve_args(args)
+        if skill_name == "arm_motion_executor":
+            args = self._resolve_motion_args(args)
+
+        skill = self._skills[skill_name]
+        try:
+            args = skill.validate_args(args)
+            result = skill.execute(**args)
+        except Exception as e:
+            logger.exception(f"Skill {skill_name} execution failed")
+            result = {"success": False, "message": str(e)}
+
+        self._update_context(skill_name, result)
+        return result
 
     def _resolve_args(self, args: Dict[str, Any]) -> Dict[str, Any]:
         """Recursively substitute string placeholders with context values."""
@@ -88,7 +188,6 @@ class SkillRouter:
             if isinstance(pose, list):
                 pose[2] += 0.1  # lift 10cm
         elif placeholder == "PLACE":
-            # Simple place location: current grasp pose but shifted in XY
             pose = self._context.get("grasp_pose", [0, 0, 0, 0, 0, 0, 1]).copy()
             if isinstance(pose, list):
                 pose[1] += 0.15  # place to the left 15cm
@@ -116,9 +215,7 @@ class SkillRouter:
             self._context["pixel_center"] = result.get("pixel_center")
             self._context["camera_3d"] = result.get("camera_3d")
             self._context["base_3d"] = result.get("base_3d")
-            # Fallback: if base_3d unavailable, use camera_3d; if neither, use a default test pose
             obj_pose = result.get("base_3d") or result.get("camera_3d") or [0.3, 0.0, 0.2]
-            # Append identity quaternion if pose is only 3D position
             if len(obj_pose) == 3:
                 obj_pose = obj_pose + [0.0, 0.0, 0.0, 1.0]
             self._context["object_pose_base"] = obj_pose

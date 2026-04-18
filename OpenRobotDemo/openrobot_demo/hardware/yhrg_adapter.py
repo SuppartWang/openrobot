@@ -3,6 +3,8 @@
 When S1_SDK is not available (e.g., macOS or missing compiled extensions),
 this module provides a compatible mock implementation based on the public
 S1_SDK_V2 API documented in the official readme.
+
+This adapter implements ManipulatorInterface for unified robot abstraction.
 """
 
 from __future__ import annotations
@@ -13,6 +15,8 @@ from typing import List, Optional
 from enum import IntEnum
 import numpy as np
 from scipy.spatial.transform import Rotation as R
+
+from openrobot_demo.hardware.manipulator_interface import ManipulatorInterface
 
 logger = logging.getLogger(__name__)
 
@@ -277,9 +281,9 @@ else:
 # ---------------------------------------------------------------------------
 # Unified Adapter classes (compatible with OpenRobotDemo skill interfaces)
 # ---------------------------------------------------------------------------
-class YHRGAdapter:
+class YHRGAdapter(ManipulatorInterface):
     """
-    Unified adapter for YHRG S1 arm, compatible with FrankaMujocoAdapter interface.
+    Unified adapter for YHRG S1 arm, implementing ManipulatorInterface.
     Supports both real hardware and mock modes.
     """
 
@@ -289,18 +293,18 @@ class YHRGAdapter:
         dev: str = "/dev/ttyUSB0",
         end_effector: str = "gripper",
     ):
-        self.mode = mode
-        self.dev = dev
-        self.end_effector = end_effector
+        self._mode = mode
+        self._dev = dev
+        self._end_effector = end_effector
         self._enabled = False
 
-        if mode == "real":
+        if self._mode == "real":
             if not _SDK_AVAILABLE:
                 logger.warning(
                     "[YHRGAdapter] Real mode requested but S1_SDK is not available. "
                     "Falling back to mock mode."
                 )
-                self.mode = "mock"
+                self._mode = "mock"
             else:
                 self._arm = _RealS1Arm(
                     mode=_RealControlMode.only_real,
@@ -309,7 +313,7 @@ class YHRGAdapter:
                 )
                 logger.info("[YHRGAdapter] Real S1 arm initialized on %s", dev)
 
-        if self.mode == "mock":
+        if self._mode == "mock":
             self._arm = _MockS1Arm(
                 mode=control_mode.only_real,
                 dev=dev,
@@ -325,6 +329,20 @@ class YHRGAdapter:
         self._enabled = False
         return self._arm.disable()
 
+    # ------------------------------------------------------------------
+    # RobotInterface properties
+    # ------------------------------------------------------------------
+    @property
+    def robot_id(self) -> str:
+        return f"yhrg_s1_{self._dev.replace('/', '_')}"
+
+    @property
+    def dof(self) -> int:
+        return 6  # S1 is 6-DOF arm
+
+    # ------------------------------------------------------------------
+    # Legacy S1-style API (preserved for backward compatibility)
+    # ------------------------------------------------------------------
     def get_pos(self) -> List[float]:
         return self._arm.get_pos()
 
@@ -345,9 +363,6 @@ class YHRGAdapter:
     def joint_control_mit(self, pos: List[float]) -> bool:
         return self._arm.joint_control_mit(pos)
 
-    def control_gripper(self, pos: float, force: float = 0.5):
-        return self._arm.control_gripper(pos, force)
-
     def set_zero_position(self):
         return self._arm.set_zero_position()
 
@@ -360,7 +375,66 @@ class YHRGAdapter:
     def check_collision(self, qpos: List[float]) -> bool:
         return self._arm.check_collision(qpos)
 
-    def close(self):
+    # ------------------------------------------------------------------
+    # ManipulatorInterface implementation
+    # ------------------------------------------------------------------
+    def forward_kinematics(self, joint_positions: np.ndarray) -> np.ndarray:
+        """Use YHRGKinematics for FK."""
+        # Lazy-init kinematics if not already present
+        if not hasattr(self, "_kin"):
+            self._kin = YHRGKinematics(end_effector_offset=[0.0, 0.0, 0.0])
+        pose = self._kin.forward_quat(joint_positions.tolist())
+        return np.array(pose, dtype=np.float32)
+
+    def inverse_kinematics(
+        self,
+        target_pose: np.ndarray,
+        current_joints: Optional[np.ndarray] = None,
+    ) -> Optional[np.ndarray]:
+        if not hasattr(self, "_kin"):
+            self._kin = YHRGKinematics(end_effector_offset=[0.0, 0.0, 0.0])
+        q0 = current_joints.tolist() if current_joints is not None else None
+        result = self._kin.inverse_quat(target_pose.tolist(), q0)
+        return np.array(result, dtype=np.float32) if result is not None else None
+
+    def get_joint_positions(self) -> np.ndarray:
+        return np.array(self._arm.get_pos()[:6], dtype=np.float32)
+
+    def get_joint_velocities(self) -> np.ndarray:
+        return np.array(self._arm.get_vel()[:6], dtype=np.float32)
+
+    def get_joint_torques(self) -> np.ndarray:
+        return np.array(self._arm.get_tau()[:6], dtype=np.float32)
+
+    def get_end_effector_pose(self) -> np.ndarray:
+        return self.forward_kinematics(self.get_joint_positions())
+
+    def get_gripper_width(self) -> float:
+        return float(self._arm.get_pos()[6])
+
+    def set_joint_positions(self, positions: np.ndarray, **kwargs) -> bool:
+        pos_list = positions.tolist() if hasattr(positions, "tolist") else list(positions)
+        return self.joint_control(pos_list)
+
+    def set_cartesian_pose(self, pose: np.ndarray, **kwargs) -> bool:
+        q = self.inverse_kinematics(pose, current_joints=self.get_joint_positions())
+        if q is None:
+            logger.error("[YHRGAdapter] IK failed for cartesian pose %s", pose)
+            return False
+        return self.set_joint_positions(q, **kwargs)
+
+    def control_gripper(self, position: float, force: Optional[float] = None) -> bool:
+        self._arm.control_gripper(position, force=force or 0.5)
+        return True
+
+    def reset(self) -> bool:
+        self._arm.set_zero_position()
+        return True
+
+    def is_ready(self) -> bool:
+        return self._enabled
+
+    def close(self) -> None:
         return self._arm.close()
 
 

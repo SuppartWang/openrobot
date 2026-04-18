@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 # Load .env from OpenRobotDemo root
 load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
 
-from openrobot_demo.skills.base import SkillInterface
+from openrobot_demo.skills.base import SkillInterface, SkillSchema, ParamSchema, ResultSchema
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +42,30 @@ class Vision3DEstimator(SkillInterface):
     @property
     def name(self) -> str:
         return "vision_3d_estimator"
+
+    @property
+    def schema(self) -> SkillSchema:
+        return SkillSchema(
+            description="Detect a target object in an RGB image and estimate its 3D position using depth and camera intrinsics.",
+            parameters=[
+                ParamSchema(name="rgb_frame", type="ndarray", description="RGB image array (H, W, 3).", required=True),
+                ParamSchema(name="target_name", type="str", description="Name of the object to detect, e.g. 'cube', '筒状布料'.", required=True),
+                ParamSchema(name="depth_frame", type="ndarray", description="Depth image array (H, W) in mm.", required=False, default=None),
+                ParamSchema(name="camera_intrinsics", type="dict", description="Camera intrinsics dict with fx, fy, ppx, ppy.", required=False, default=None),
+                ParamSchema(name="hand_eye_calib", type="dict", description="Hand-eye calibration dict with rotation_matrix and translation_vector.", required=False, default=None),
+                ParamSchema(name="end_effector_pose", type="list", description="Current end-effector pose for hand-eye transform.", required=False, default=None),
+                ParamSchema(name="ground_truth_depth_mm", type="float", description="Optional ground-truth depth in mm for testing.", required=False, default=None),
+            ],
+            returns=[
+                ResultSchema(name="success", type="bool", description="Whether detection succeeded."),
+                ResultSchema(name="message", type="str", description="Status message."),
+                ResultSchema(name="pixel_bbox", type="list", description="Bounding box [x1, y1, x2, y2] in pixel coordinates."),
+                ResultSchema(name="pixel_center", type="list", description="Center point [u, v] in pixel coordinates."),
+                ResultSchema(name="camera_3d", type="list", description="3D position [x, y, z] in camera frame (meters)."),
+                ResultSchema(name="base_3d", type="list", description="3D position [x, y, z] in robot base frame (meters)."),
+            ],
+            dependencies=["camera", "vlm_api"],
+        )
 
     def execute(self,
                 rgb_frame: np.ndarray,
