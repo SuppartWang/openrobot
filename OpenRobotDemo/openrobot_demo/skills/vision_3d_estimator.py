@@ -55,6 +55,8 @@ class Vision3DEstimator(SkillInterface):
                 ParamSchema(name="hand_eye_calib", type="dict", description="Hand-eye calibration dict with rotation_matrix and translation_vector.", required=False, default=None),
                 ParamSchema(name="end_effector_pose", type="list", description="Current end-effector pose for hand-eye transform.", required=False, default=None),
                 ParamSchema(name="ground_truth_depth_mm", type="float", description="Optional ground-truth depth in mm for testing.", required=False, default=None),
+                ParamSchema(name="detect_mode", type="str", description='Detection mode: "center" (default), "opening_left", "opening_right", "bottom_edge".', required=False, default="center"),
+                ParamSchema(name="opening_offset_m", type="float", description="X-axis offset for opening detection (default 0.2m).", required=False, default=0.2),
             ],
             returns=[
                 ResultSchema(name="success", type="bool", description="Whether detection succeeded."),
@@ -75,23 +77,46 @@ class Vision3DEstimator(SkillInterface):
                 hand_eye_calib: Optional[Dict[str, Any]] = None,
                 end_effector_pose: Optional[list] = None,
                 ground_truth_depth_mm: Optional[float] = None,
+                detect_mode: str = "center",
+                opening_offset_m: float = 0.2,
                 **kwargs) -> Dict[str, Any]:
         intrinsics = camera_intrinsics or {"fx": 600.0, "fy": 600.0, "ppx": 320.0, "ppy": 240.0}
 
         # Step 1: VLM detection (with color-based fallback)
         if self._client is None:
             logger.warning("VLM client not initialized. Using color detection fallback.")
-            bbox, center = self._mock_detect(rgb_frame)
+            bbox, center = self._mock_detect(rgb_frame, detect_mode)
         else:
-            bbox, center = self._detect_with_vlm(rgb_frame, target_name)
+            bbox, center = self._detect_with_vlm(rgb_frame, target_name, detect_mode)
             if bbox is None:
                 logger.warning("VLM detection failed. Falling back to color detection.")
-                bbox, center = self._mock_detect(rgb_frame)
+                bbox, center = self._mock_detect(rgb_frame, detect_mode)
 
         if bbox is None:
-            return {"success": False, "message": f"Could not detect '{target_name}'."}
+            return {"success": False, "message": f"Could not detect '{target_name}' (mode={detect_mode})."}
 
         u, v = int(center[0]), int(center[1])
+
+        # Apply opening offset in camera X direction (pixel x)
+        if detect_mode in ("opening_left", "opening_right"):
+            # Convert offset in meters to pixel offset using approximate focal length
+            fx = (camera_intrinsics or {"fx": 600.0})["fx"]
+            # Need depth to convert meters to pixels
+            temp_z = None
+            if depth_frame is not None:
+                h, w = depth_frame.shape
+                if 0 <= v < h and 0 <= u < w:
+                    patch = depth_frame[max(0, v - 2):min(h, v + 3), max(0, u - 2):min(w, u + 3)]
+                    temp_z = float(np.median(patch)) * 0.001  # mm -> m
+            if temp_z is None and ground_truth_depth_mm is not None:
+                temp_z = ground_truth_depth_mm * 0.001
+            if temp_z is not None and temp_z > 0:
+                pixel_offset = int(opening_offset_m * fx / temp_z)
+                sign = -1 if detect_mode == "opening_left" else 1
+                u += sign * pixel_offset
+                u = max(0, min(u, rgb_frame.shape[1] - 1))
+                logger.info("[Vision3DEstimator] Applied opening offset: %+.3fm -> %+d px (z=%.3fm)",
+                            sign * opening_offset_m, sign * pixel_offset, temp_z)
 
         # Step 2: Get depth at center
         camera_3d = None
@@ -135,54 +160,83 @@ class Vision3DEstimator(SkillInterface):
             "base_3d": base_3d,
         }
 
-    def _mock_detect(self, rgb_frame: np.ndarray):
+    def _mock_detect(self, rgb_frame: np.ndarray, detect_mode: str = "center"):
         """Fallback detection for testing without VLM API.
         Tries color-based object detection (yellow) using OpenCV;
         falls back to image center if no blob is found.
         """
         try:
             import cv2
-            # Convert RGB to HSV
             hsv = cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2HSV)
-            # Yellow range in HSV
             lower_yellow = np.array([20, 100, 100])
             upper_yellow = np.array([40, 255, 255])
             mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
-            # Morphological close to merge blobs
             kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
-                # Pick largest contour
                 c = max(contours, key=cv2.contourArea)
                 x, y, w, h = cv2.boundingRect(c)
-                return (x, y, x + w, y + h), (x + w / 2.0, y + h / 2.0)
+                cx, cy = x + w / 2.0, y + h / 2.0
+                # Adjust center based on detect_mode
+                if detect_mode == "bottom_edge":
+                    cy = y + h * 0.9  # near bottom
+                elif detect_mode == "opening_left":
+                    cx = x + w * 0.2  # near left edge
+                elif detect_mode == "opening_right":
+                    cx = x + w * 0.8  # near right edge
+                return (x, y, x + w, y + h), (cx, cy)
         except Exception as e:
             logger.warning(f"Color detection failed: {e}")
 
-        # Fallback: center of image
+        # Fallback: center of image with mode offset
         h, w = rgb_frame.shape[:2]
-        x1, y1 = w // 3, h // 3
-        x2, y2 = 2 * w // 3, 2 * h // 3
-        return (x1, y1, x2, y2), ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+        cx, cy = w / 2.0, h / 2.0
+        if detect_mode == "bottom_edge":
+            cy = h * 0.85
+        elif detect_mode == "opening_left":
+            cx = w * 0.3
+        elif detect_mode == "opening_right":
+            cx = w * 0.7
+        x1, y1 = int(w * 0.3), int(h * 0.3)
+        x2, y2 = int(w * 0.7), int(h * 0.7)
+        return (x1, y1, x2, y2), (cx, cy)
 
-    def _detect_with_vlm(self, rgb_frame: np.ndarray, target_name: str):
+    def _detect_with_vlm(self, rgb_frame: np.ndarray, target_name: str, detect_mode: str = "center"):
         """Call VLM and parse bounding box. Returns (bbox, center) or (None, None)."""
         import cv2
         _, buf = cv2.imencode(".jpg", cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR))
         b64_image = base64.b64encode(buf.tobytes()).decode("utf-8")
 
+        # Build prompt based on detect_mode
+        if detect_mode == "bottom_edge":
+            target_desc = f"{target_name}的最下沿中心点"
+            extra_instr = (
+                "请在图片中找到该物体的最下方边缘，返回最下沿中心点的坐标。"
+                "如果物体是弧形，返回弧形最下端的中心位置。"
+            )
+        elif detect_mode in ("opening_left", "opening_right"):
+            side = "左侧" if detect_mode == "opening_left" else "右侧"
+            target_desc = f"{target_name}的{side}开口处"
+            extra_instr = (
+                f"请在图片中找到该物体的{side}开口/边缘处，"
+                f"返回{side}开口中心点的坐标。"
+            )
+        else:
+            target_desc = target_name
+            extra_instr = "请在图片中找到该目标并返回边界框中心点坐标。"
+
         system_prompt = (
-            "你是一个专业的目标检测助手。任务是：\n"
+            "你是一个专业的机器人视觉检测助手。任务是：\n"
             "1. 分析图片中的物体；\n"
-            "2. 找到用户指定的目标；\n"
-            "3. 返回该物体的边界框左上角和右下角坐标；\n"
+            f"2. {extra_instr}\n"
+            "3. 返回该目标的边界框左上角和右下角坐标；\n"
             "坐标系：图片左上角为原点(0,0)，向右为x轴正方向，向下为y轴正方向\n"
             "必须严格按纯文本JSON返回：{\"x1\": 200, \"y1\": 150, \"x2\": 500, \"y2\": 350}\n"
             "未找到返回：{\"x1\": 0, \"y1\": 0, \"x2\": 0, \"y2\": 0}\n"
             "不要输出任何多余文字。"
         )
-        user_prompt = f'请在图片中找到"{target_name}"并返回边界框坐标。'
+        user_prompt = f'请在图片中找到"{target_desc}"并返回边界框坐标。'
 
         try:
             completion = self._client.chat.completions.create(

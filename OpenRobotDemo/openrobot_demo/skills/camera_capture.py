@@ -11,8 +11,9 @@ logger = logging.getLogger(__name__)
 
 class CameraCapture(SkillInterface):
     def __init__(self, camera_type: str = "usb", device_id: int = 0,
-                 width: int = 640, height: int = 480, fps: int = 30):
-        self._driver = CameraDriver(camera_type, device_id, width, height, fps)
+                 width: int = 640, height: int = 480, fps: int = 30,
+                 serial: str = None):
+        self._driver = CameraDriver(camera_type, device_id, width, height, fps, serial=serial)
         self._connected = False
 
     @property

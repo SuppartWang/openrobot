@@ -159,7 +159,7 @@ class FabricManipulationSkill(SkillInterface):
         sync_tol = params.get("dual_arm_sync_tolerance_m", 0.002)
 
         # Compute left/right grasp targets in base frame
-        cx, cy, cz = fabric_center
+        cx, cy, cz = fabric_center[:3]
         half_dist = pinch_dist / 2.0
 
         left_target = [cx, cy - half_dist, cz]   # grasp left edge
@@ -234,6 +234,7 @@ class FabricManipulationSkill(SkillInterface):
         sync_tol = params.get("dual_arm_sync_tolerance_m", 0.002)
 
         # Compute target: plate top + insert_depth below
+        plate_center = plate_center[:3]
         target_z = plate_center[2] - insert_depth_m
         left_pose = self.dual_arm.get_ee_pose(ArmSide.LEFT)
         right_pose = self.dual_arm.get_ee_pose(ArmSide.RIGHT)

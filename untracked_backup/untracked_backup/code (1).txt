@@ -1,0 +1,287 @@
+视觉部分，方便调用版本
+import pyrealsense2 as rs
+import numpy as np
+import cv2
+from openai import OpenAI
+import base64
+import re
+import os
+
+# 屏蔽代理环境变量
+os.environ.pop('http_proxy', None)
+os.environ.pop('https_proxy', None)
+os.environ.pop('all_proxy', None)
+os.environ.pop('HTTP_PROXY', None)
+os.environ.pop('HTTPS_PROXY', None)
+os.environ.pop('ALL_PROXY', None)
+
+def detect_frame_from_memory(frame, target_name, api_key):
+    client = OpenAI(
+        api_key=api_key, 
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1" 
+    )
+
+    h, w, _ = frame.shape
+    scale_ratio = 640 / w
+    detect_w, detect_h = 640, int(h * scale_ratio)
+    resized_frame = cv2.resize(frame, (detect_w, detect_h))
+   
+    _, buffer = cv2.imencode('.jpg', resized_frame)
+    base64_image = base64.b64encode(buffer).decode("utf-8")
+
+    prompt_text = f"""你是一个精确的机器视觉定位系统。
+    请在宽{detect_w}，高{detect_h}的图片中，精确找到“{target_name}”的中心点。
+    要求：
+    1. 必须精准定位该物体中心位置的坐标。
+    2. 绝对禁止输出任何额外解释文字！
+    3. 格式只能是包含两个数字的纯JSON数组：[中心X, 中心Y]
+    如果找不到目标，请返回 [0, 0]"""
+    
+    try:
+        response = client.chat.completions.create(
+            model="qwen-vl-max-latest", 
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{base64_image}"}},
+                        {"type": "text", "text": prompt_text}
+                    ]
+                }
+            ],
+            temperature=0.1
+        )
+        
+        result_text = response.choices[0].message.content.strip()
+        print(f"[视觉层] 大模型回复: {result_text}")
+        
+        clean_text = re.sub(r'[a-zA-Z"\'{}]+', '', result_text)
+        nums = re.findall(r'\d+', clean_text)
+        
+        if len(nums) >= 2:
+            x, y = map(int, nums[:2])
+            if x == 0 and y == 0:
+                return None
+            real_x = int(x / scale_ratio)
+            real_y = int(y / scale_ratio)
+            return (real_x, real_y)
+        return None
+    except Exception as e:
+        print(f"API 请求出错: {e}")
+        return None
+
+
+class VisionSystem:
+    """视觉系统封装类，供主程序调用"""
+    def __init__(self, api_key, target_obj):
+        self.api_key = api_key
+        self.target_obj = target_obj
+        
+        print("正在初始化 RealSense D435i 相机...")
+        self.pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
+        self.profile = self.pipeline.start(config)
+
+        self.align = rs.align(rs.stream.color)
+        self.intrinsics = self.profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+        print("相机启动成功，等待调用。")
+
+    def wait_and_detect(self):
+        """
+        保持实时显示画面，阻塞等待用户按 'd' 键。
+        返回: 
+            float: 测距得到的 distance_m
+            -1: 如果用户按 'q' 退出
+            None: 如果没找到目标或深度异常
+        """
+        print(f"\n---> 开始实时画面。寻找目标: [{self.target_obj}]")
+        print("操作：按 'd' 呼叫模型测距 | 按 'q' 退出")
+        
+        while True:
+            frames = self.pipeline.wait_for_frames()
+            aligned_frames = self.align.process(frames)
+            aligned_depth_frame = aligned_frames.get_depth_frame()
+            color_frame = aligned_frames.get_color_frame()
+
+            if not aligned_depth_frame or not color_frame:
+                continue
+
+            color_image = np.asanyarray(color_frame.get_data())
+            display_frame = color_image.copy()
+
+            cv2.putText(display_frame, f"Target: {self.target_obj} | 'd' Detect | 'q' Quit", 
+                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.imshow("Vision System Feed", display_frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                return -1  # 退出信号
+            elif key == ord('d'):
+                print("\n[视觉层] 正在截图并发送给大模型识别...")
+                point = detect_frame_from_memory(color_image, self.target_obj, self.api_key)
+                
+                if point:
+                    cx, cy = point
+                    distance_m = aligned_depth_frame.get_distance(cx, cy)
+                    
+                    # 绘制一下识别结果
+                    cv2.circle(color_image, (cx, cy), 5, (0, 0, 255), -1)
+                    cv2.putText(color_image, f"Z: {distance_m:.2f}m", (cx, max(cy - 10, 0)), 
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    cv2.imshow("Vision System Feed", color_image)
+                    cv2.waitKey(500) # 停顿半秒展示识别点
+                    
+                    if distance_m > 0:
+                        return distance_m
+                    else:
+                        print("[视觉层] 目标位置深度数据丢失！")
+                        return None
+                else:
+                    print("[视觉层] 大模型未能找到目标。")
+                    return None
+
+    def close(self):
+        self.pipeline.stop()
+        cv2.destroyAllWindows()
+
+
+# ========================================================================
+# 独立运行测试代码（当作为模块被 import 时，以下代码不会执行）
+# ========================================================================
+if __name__ == "__main__":
+    TEST_API_KEY = "sk-03b0ef30a9bf496ebeebf89523e7c668" 
+    TEST_TARGET_OBJ = "粉色布料的下边沿"
+    
+    print("【独立测试模式】启动中...")
+    
+    # 实例化视觉系统
+    vision = VisionSystem(api_key=TEST_API_KEY, target_obj=TEST_TARGET_OBJ)
+    
+    try:
+        while True:
+            # 阻塞等待测距结果
+            distance = vision.wait_and_detect()
+            
+            if distance == -1:
+                print("【独立测试模式】收到退出信号，程序结束。")
+                break
+            elif distance is not None:
+                # 独立运行时，不控制机械臂，只打印结果
+                print(f"=====================================")
+                print(f"✅ [测试成功] 获取到目标的绝对深度: {distance:.3f} 米")
+                print(f"=====================================")
+            else:
+                print("❌ [测试失败] 未能获取有效距离。")
+                
+    except KeyboardInterrupt:
+        print("\n【独立测试模式】手动中断...")
+    finally:
+        # 释放相机资源
+        vision.close()
+
+
+
+控制部分，
+
+
+import time
+from S1_SDK.S1_arm import S1_arm, control_mode, S1_slover
+
+# 【关键】从刚才的视觉文件中导入 VisionSystem 类
+from step1_capture_detect import VisionSystem 
+
+class DualArmController:
+    def __init__(self, left_dev: str, right_dev: str):
+        print("正在初始化双臂控制系统...")
+        self.left_arm = S1_arm(mode=control_mode.only_real, dev=left_dev, end_effector="None", arm_version="V2")
+        self.left_arm.enable()
+        
+        self.right_arm = S1_arm(mode=control_mode.only_real, dev=right_dev, end_effector="None", arm_version="V2")
+        self.right_arm.enable()
+        
+        self.solver = S1_slover(end_offset=[0.0, 0.0, 0.0])
+        print("双臂连接并使能成功！")
+
+    def move_forward(self, distance_m: float):
+        safe_margin = 0.05 
+        actual_move_dist = distance_m - safe_margin if distance_m > safe_margin else 0
+        
+        if actual_move_dist <= 0:
+            print("[控制层] 目标距离太近，出于安全考虑，机械臂不执行移动。")
+            return
+
+        print(f"[控制层] 接收到视觉测距: {distance_m:.3f}m | 实际下发前进: {actual_move_dist:.3f}m")
+
+        left_current_q = self.left_arm.get_pos()[:6]
+        right_current_q = self.right_arm.get_pos()[:6]
+
+        left_tcp = self.solver.forward_eular(left_current_q)
+        right_tcp = self.solver.forward_eular(right_current_q)
+
+        steps = 50 
+        step_time = 0.02 
+        
+        print("[控制层] 机械臂开始步进运动...")
+        for i in range(1, steps + 1):
+            current_increment = (actual_move_dist / steps) * i
+            
+            # X轴前进
+            left_target_tcp = left_tcp.copy()
+            left_target_tcp[0] += current_increment 
+            
+            right_target_tcp = right_tcp.copy()
+            right_target_tcp[0] += current_increment
+
+            left_target_q = self.solver.inverse_eular(left_target_tcp, left_current_q)
+            right_target_q = self.solver.inverse_eular(right_target_tcp, right_current_q)
+
+            if left_target_q: self.left_arm.joint_control(left_target_q)
+            if right_target_q: self.right_arm.joint_control(right_target_q)
+
+            time.sleep(step_time)
+            
+        print("[控制层] 前进动作执行完毕！\n")
+
+    def disconnect(self):
+        self.left_arm.disable()
+        self.right_arm.disable()
+        print("双臂已安全下电。")
+
+
+if __name__ == "__main__":
+    # ---------------- 1. 配置参数 ----------------
+    # 请确认你的实际串口号
+    LEFT_PORT = "/dev/ttyUSB0" 
+    RIGHT_PORT = "/dev/ttyUSB1"
+    
+    API_KEY = "sk-03b0ef30a9bf496ebeebf89523e7c668"
+    TARGET_OBJ = "粉色布料的下边沿"
+
+    # ---------------- 2. 初始化子系统 ----------------
+    vision_system = VisionSystem(api_key=API_KEY, target_obj=TARGET_OBJ)
+    arm_controller = DualArmController(left_dev=LEFT_PORT, right_dev=RIGHT_PORT)
+
+    # ---------------- 3. 主循环 ----------------
+    try:
+        # 进入无限循环：看画面 -> 按d -> 测距 -> 机械臂走 -> 回到看画面
+        while True:
+            # 这一步会卡住，直到你在画面窗口按下 'd' 或者 'q'
+            distance = vision_system.wait_and_detect()
+            
+            if distance == -1:
+                print("检测到退出指令。")
+                break  # 退出循环
+            elif distance is not None:
+                # 获取到距离，交给机械臂！
+                arm_controller.move_forward(distance)
+            else:
+                print("未获取到有效距离，不执行运动。继续实时监测...")
+
+    except KeyboardInterrupt:
+        print("\n收到 Ctrl+C 中断信号...")
+    finally:
+        # 优雅地关闭硬件
+        arm_controller.disconnect()
+        vision_system.close()

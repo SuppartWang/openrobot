@@ -6,9 +6,9 @@ inserts it over an aluminum support plate, waits for defect inspection,
 then withdraws the fabric.
 
 Hardware:
-    - Left arm:  YHRG S1 on /dev/ttyUSB0
-    - Right arm: YHRG S1 on /dev/ttyUSB1
-    - Camera:    RealSense D435i (optional, mock fallback on macOS)
+    - Left arm:  YHRG S1 on /dev/left_leader  -> ttyUSB0
+    - Right arm: YHRG S1 on /dev/right_follower -> ttyUSB1
+    - Camera:    RealSense D435i (main_camera, serial=135122077817)
     - End-effector: parallel 2-finger gripper
 
 Usage:
@@ -17,12 +17,13 @@ Usage:
 
     # Real hardware mode (Linux + S1_SDK + RealSense)
     python scripts/demo_fabric_dual_arm.py --mode real \
-        --left-dev /dev/ttyUSB0 --right-dev /dev/ttyUSB1
+        --left-dev /dev/left_leader --right-dev /dev/right_follower \
+        --camera-serial 135122077817
 """
 
+import os
 import argparse
 import logging
-import os
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,29 @@ from dotenv import load_dotenv
 _project_root = os.path.join(os.path.dirname(__file__), "..")
 load_dotenv(Path(_project_root) / ".env")
 sys.path.insert(0, _project_root)
+
+# Parse mode early so we can decide whether to force mock / remove SDK path.
+# (argparse will re-parse later; this is just for environment setup.)
+_mode = "mock"
+for i, arg in enumerate(sys.argv):
+    if arg == "--mode" and i + 1 < len(sys.argv):
+        _mode = sys.argv[i + 1]
+        break
+
+if _mode == "mock":
+    # Force mock mode to avoid segfaults from the real S1_SDK launching
+    # multiple MuJoCo viewer instances in the background.
+    os.environ["OPENROBOT_FORCE_MOCK"] = "1"
+    # Prevent the real S1_SDK from shadowing our mock implementation
+    _sdk_path = os.path.join(os.path.dirname(_project_root), "YHRG_control", "S1_SDK_V2", "src")
+    if _sdk_path in sys.path:
+        sys.path.remove(_sdk_path)
+else:
+    # Real mode: ensure S1_SDK is on sys.path so YHRGAdapter can import it.
+    _sdk_path = os.path.join(os.path.dirname(_project_root), "YHRG_control", "S1_SDK_V2", "src")
+    if _sdk_path not in sys.path:
+        sys.path.insert(0, _sdk_path)
+    os.environ.pop("OPENROBOT_FORCE_MOCK", None)
 
 from openrobot_demo.agent import BDIAgent, LLMPlanner, SkillRouter
 from openrobot_demo.dual_arm.controller import DualArmController, ArmSide
@@ -83,17 +107,17 @@ def setup_dual_arm(mode: str, left_dev: str, right_dev: str) -> DualArmControlle
         left_dev=left_dev,
         right_dev=right_dev,
         mode=mode,
-        end_effector="gripper",
+        end_effector="None",
     )
     ctrl.enable()
     return ctrl
 
 
-def setup_sensors(dual_arm: DualArmController) -> list:
-    """Initialize sensor channels."""
+def setup_sensors(dual_arm: DualArmController, camera_serial: str) -> list:
+    """Initialize sensor channels.  RGB and Depth share one RealSense pipeline."""
     sensors = [
-        RealSenseRGBSensor(source_id="rs_d435i_rgb"),
-        RealSenseDepthSensor(source_id="rs_d435i_depth"),
+        RealSenseRGBSensor(source_id="rs_d435i_rgb", serial=camera_serial),
+        RealSenseDepthSensor(source_id="rs_d435i_depth", serial=camera_serial),
         ProprioceptionSensor(source_id="left_arm", arm_adapter=dual_arm.left_arm, kinematics_solver=dual_arm.left_kin),
         ProprioceptionSensor(source_id="right_arm", arm_adapter=dual_arm.right_arm, kinematics_solver=dual_arm.right_kin),
         TactileSensor(source_id="left_gripper", body_names=["gripper_base", "left_finger"], mujoco_model=None, mujoco_data=None),
@@ -104,8 +128,9 @@ def setup_sensors(dual_arm: DualArmController) -> list:
 
 def run_fabric_demo(
     mode: str = "mock",
-    left_dev: str = "/dev/ttyUSB0",
-    right_dev: str = "/dev/ttyUSB1",
+    left_dev: str = "/dev/left_leader",
+    right_dev: str = "/dev/right_follower",
+    camera_serial: str = "135122077817",
     instruction: str = "将筒状布料提起，套在铝合金支撑板上，等待检测后再取下来",
     recorder: EpisodeRecorder = None,
 ):
@@ -114,6 +139,7 @@ def run_fabric_demo(
     print("\n" + "=" * 60)
     print("  OpenRobotDemo — Dual-Arm Fabric Manipulation")
     print(f"  Mode: {mode} | Arms: {left_dev} + {right_dev}")
+    print(f"  Camera: {camera_serial}")
     print("=" * 60 + "\n")
 
     # 1. Experience library
@@ -157,7 +183,7 @@ def run_fabric_demo(
             relations={"on": "workbench", "under": "fabric_tube"},
         )
     )
-    sensors = setup_sensors(dual_arm)
+    sensors = setup_sensors(dual_arm, camera_serial)
     for s in sensors:
         print(f"      Sensor {s.name}/{s.source_id}: available={s.is_available()}")
 
@@ -169,12 +195,18 @@ def run_fabric_demo(
         experience_library=exp_lib,
         world_model=world,
     )
-    # Register legacy skills for camera/vision fallback
-    camera_skill = CameraCapture(camera_type="mock")
-    arm_reader = ArmStateReader()
+    # Camera skill uses realsense driver for real hardware
+    camera_skill = CameraCapture(
+        camera_type="realsense" if mode == "real" else "usb",
+        device_id=0,
+        width=640,
+        height=480,
+        serial=camera_serial if mode == "real" else None,
+    )
+    arm_reader = ArmStateReader(external_arm=dual_arm.left_arm)
     vision_estimator = Vision3DEstimator()
     grasp_predictor = GraspPointPredictor()
-    arm_executor = ArmMotionExecutor()
+    arm_executor = ArmMotionExecutor(external_arm=dual_arm.left_arm)
     vla_executor = VLAPolicyExecutor(external_arm=dual_arm.left_arm)
 
     router.register(camera_skill)
@@ -198,6 +230,9 @@ def run_fabric_demo(
     planner = LLMPlanner(
         experience_retriever=exp_retriever,
         skill_router=router,
+        api_key=os.getenv("DASHSCOPE_API_KEY") or os.getenv("QWEN_API_KEY"),
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen-max",
     )
     agent = BDIAgent(
         planner=planner,
@@ -248,8 +283,9 @@ def run_fabric_demo(
 def main():
     parser = argparse.ArgumentParser(description="Dual-Arm Fabric Manipulation Demo")
     parser.add_argument("--mode", choices=["mock", "real"], default="mock", help="Execution mode")
-    parser.add_argument("--left-dev", default="/dev/ttyUSB0", help="Left arm serial device")
-    parser.add_argument("--right-dev", default="/dev/ttyUSB1", help="Right arm serial device")
+    parser.add_argument("--left-dev", default="/dev/left_follower", help="Left arm serial device")
+    parser.add_argument("--right-dev", default="/dev/right_follower", help="Right arm serial device")
+    parser.add_argument("--camera-serial", default="135122077817", help="RealSense camera serial number")
     parser.add_argument(
         "--instruction",
         default="将筒状布料提起，套在铝合金支撑板上，等待检测后再取下来",
@@ -269,6 +305,7 @@ def main():
         mode=args.mode,
         left_dev=args.left_dev,
         right_dev=args.right_dev,
+        camera_serial=args.camera_serial,
         instruction=args.instruction,
         recorder=recorder,
     )

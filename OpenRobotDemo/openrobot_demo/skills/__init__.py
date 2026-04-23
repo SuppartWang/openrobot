@@ -7,6 +7,9 @@ from openrobot_demo.skills.vision_3d_estimator import Vision3DEstimator
 from openrobot_demo.skills.grasp_predictor import GraspPointPredictor
 from openrobot_demo.skills.arm_executor import ArmMotionExecutor
 from openrobot_demo.skills.vla_policy_executor import VLAPolicyExecutor
+from openrobot_demo.skills.coordinate_transform import CoordinateTransformSkill
+from openrobot_demo.skills.gripper_control import GripperControlSkill
+from openrobot_demo.skills.dual_arm_coordinated_motion import DualArmCoordinatedMotionSkill
 
 # Signal processing & algorithms (P1-3)
 from openrobot_demo.skills.signal_processing import (
@@ -41,6 +44,9 @@ __all__ = [
     "GraspPointPredictor",
     "ArmMotionExecutor",
     "VLAPolicyExecutor",
+    "CoordinateTransformSkill",
+    "GripperControlSkill",
+    "DualArmCoordinatedMotionSkill",
     # Signal processing
     "LowPassFilterSkill",
     "KalmanFilter1DSkill",

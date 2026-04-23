@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import logging
+import os
 from typing import List, Optional
 from enum import IntEnum
 import numpy as np
@@ -23,17 +24,23 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Try importing the real SDK; otherwise fall back to mock
 # ---------------------------------------------------------------------------
-try:
-    from S1_SDK import S1_arm as _RealS1Arm
-    from S1_SDK import S1_slover as _RealS1Slover
-    from S1_SDK import control_mode as _RealControlMode
-    from S1_SDK import Arm_Search as _RealArmSearch
+_FORCE_MOCK = os.getenv("OPENROBOT_FORCE_MOCK", "0") == "1"
 
-    _SDK_AVAILABLE = True
-    logger.info("[YHRGAdapter] S1_SDK loaded successfully.")
-except Exception as e:
+if _FORCE_MOCK:
     _SDK_AVAILABLE = False
-    logger.warning(f"[YHRGAdapter] S1_SDK not available ({e}). Using MOCK mode.")
+    logger.info("[YHRGAdapter] OPENROBOT_FORCE_MOCK=1, using MOCK mode.")
+else:
+    try:
+        from S1_SDK import S1_arm as _RealS1Arm
+        from S1_SDK import S1_slover as _RealS1Slover
+        from S1_SDK import control_mode as _RealControlMode
+        from S1_SDK import Arm_Search as _RealArmSearch
+
+        _SDK_AVAILABLE = True
+        logger.info("[YHRGAdapter] S1_SDK loaded successfully.")
+    except Exception as e:
+        _SDK_AVAILABLE = False
+        logger.warning(f"[YHRGAdapter] S1_SDK not available ({e}). Using MOCK mode.")
 
 
 class control_mode(IntEnum):
@@ -487,6 +494,44 @@ class YHRGKinematics:
         return None
 
 
+class SDKKinematics:
+    """Wrapper around SDK native S1_slover (C++ KDL) with fallback to YHRGKinematics.
+
+    Provides the same interface as YHRGKinematics:
+      - forward_quat(qpos) -> [x,y,z,qx,qy,qz,qw]
+      - forward_eular(qpos) -> [x,y,z,rx,ry,rz]
+      - inverse_quat(pose7, qpos) -> 6-DOF joints or None
+      - inverse_eular(pose6, qpos) -> 6-DOF joints or None
+    """
+
+    def __init__(self, end_effector_offset: List[float] = None):
+        self.offset = end_effector_offset or [0.0, 0.0, 0.0]
+        if _SDK_AVAILABLE:
+            self._solver = _RealS1Slover(self.offset)
+            self._native = True
+            logger.info("[SDKKinematics] Using native S1_slover (C++ KDL).")
+        else:
+            self._solver = YHRGKinematics(end_effector_offset=self.offset)
+            self._native = False
+            logger.warning("[SDKKinematics] S1_slover not available, falling back to YHRGKinematics.")
+
+    def forward_quat(self, joints: List[float]) -> List[float]:
+        return self._solver.forward_quat(joints)
+
+    def forward_eular(self, joints: List[float]) -> List[float]:
+        return self._solver.forward_eular(joints)
+
+    def inverse_quat(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
+        """IK for 7-DOF pose [x,y,z,qx,qy,qz,qw]. Returns 6-DOF joints or None."""
+        result = self._solver.inverse_quat(target_pose, joint_positions)
+        return result if result is not None else None
+
+    def inverse_eular(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
+        """IK for 6-DOF Euler pose [x,y,z,rx,ry,rz]. Returns 6-DOF joints or None."""
+        result = self._solver.inverse_eular(target_pose, joint_positions)
+        return result if result is not None else None
+
+
 __all__ = [
     "S1_arm",
     "S1_slover",
@@ -494,4 +539,5 @@ __all__ = [
     "Arm_Search",
     "YHRGAdapter",
     "YHRGKinematics",
+    "SDKKinematics",
 ]

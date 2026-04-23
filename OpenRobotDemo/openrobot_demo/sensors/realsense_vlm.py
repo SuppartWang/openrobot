@@ -12,6 +12,7 @@ import cv2
 import numpy as np
 
 from .base import SensorChannel, PerceptionData
+from .realsense_shared import RealSenseDevicePool
 
 logger = logging.getLogger(__name__)
 
@@ -69,23 +70,19 @@ class RealSenseVLMSensor(SensorChannel):
         else:
             logger.warning("[RealSenseVLMSensor] OpenAI client not available or API key missing.")
 
-        self._pipeline: Optional["rs.pipeline"] = None
-        self._config: Optional["rs.config"] = None
-        self._align: Optional["rs.align"] = None
+        self.serial: Optional[str] = None
         self._started = False
 
+    def attach(self, serial: str, width: int = 640, height: int = 480, fps: int = 30):
+        """Attach to a shared RealSense pipeline by serial number."""
         if _RS_AVAILABLE:
             try:
-                self._pipeline = rs.pipeline()
-                self._config = rs.config()
-                self._config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-                self._config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
-                profile = self._pipeline.start(self._config)
-                self._align = rs.align(rs.stream.color)
+                RealSenseDevicePool.get_device(serial, width, height, fps)
+                self.serial = serial
                 self._started = True
-                logger.info("[RealSenseVLMSensor] Camera started (%dx%d@%d)", width, height, fps)
+                logger.info("[RealSenseVLMSensor] Attached to shared pipeline (%s)", serial)
             except Exception as exc:
-                logger.warning("[RealSenseVLMSensor] Failed to start camera: %s", exc)
+                logger.warning("[RealSenseVLMSensor] Failed to attach shared pipeline: %s", exc)
                 self._started = False
 
     def is_available(self) -> bool:
@@ -95,20 +92,12 @@ class RealSenseVLMSensor(SensorChannel):
         if not self.is_available():
             raise RuntimeError("RealSenseVLMSensor: camera or VLM client not available")
 
-        frames = self._pipeline.wait_for_frames(timeout_ms=5000)
-        aligned_frames = self._align.process(frames)
-        depth_frame = aligned_frames.get_depth_frame()
-        color_frame = aligned_frames.get_color_frame()
+        color_frame, depth_frame = RealSenseDevicePool.capture_frames(self.serial, apply_filters=True)
         if not depth_frame or not color_frame:
             raise RuntimeError("RealSenseVLMSensor: failed to get aligned frames")
 
         color_image = np.asanyarray(color_frame.get_data())
-        intrinsics = (
-            self._pipeline.get_active_profile()
-            .get_stream(rs.stream.color)
-            .as_video_stream_profile()
-            .get_intrinsics()
-        )
+        intrinsics = RealSenseDevicePool.get_intrinsics(self.serial)
 
         # --- VLM detection ---
         h, w, _ = color_image.shape
@@ -227,10 +216,7 @@ class RealSenseVLMSensor(SensorChannel):
         )
 
     def close(self) -> None:
-        if self._pipeline and self._started:
-            try:
-                self._pipeline.stop()
-                logger.info("[RealSenseVLMSensor] Camera stopped")
-            except Exception as exc:
-                logger.warning("[RealSenseVLMSensor] Error stopping camera: %s", exc)
+        if self.serial:
+            RealSenseDevicePool.release_device(self.serial)
+            logger.info("[RealSenseVLMSensor] Released shared pipeline")
         self._started = False

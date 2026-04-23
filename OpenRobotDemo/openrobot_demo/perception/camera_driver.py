@@ -12,17 +12,20 @@ class CameraDriver:
 
     def __init__(self, camera_type: str = "usb", device_id: int = 0,
                  width: int = 640, height: int = 480, fps: int = 30,
+                 serial: str = None,
                  mujoco_model=None, mujoco_data=None, mujoco_camera_name: str = "wrist_cam"):
         self.camera_type = camera_type.lower()
         self.device_id = device_id
         self.width = width
         self.height = height
         self.fps = fps
+        self.serial = serial
         self._cap = None
         self._rs_pipeline = None
         self._rs_config = None
         self._rs_align = None
         self._fallback_synthetic = False
+        self._use_shared_rs = False
 
         # MuJoCo-specific
         self._mujoco_model = mujoco_model
@@ -53,15 +56,26 @@ class CameraDriver:
 
         elif self.camera_type == "realsense":
             try:
-                import pyrealsense2 as rs
-                self._rs_pipeline = rs.pipeline()
-                self._rs_config = rs.config()
-                self._rs_config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
-                self._rs_config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
-                self._rs_pipeline.start(self._rs_config)
-                self._rs_align = rs.align(rs.stream.color)
-                logger.info("[CameraDriver] RealSense connected.")
-                return True
+                if self.serial:
+                    # Use shared pipeline (managed by RealSenseDevicePool)
+                    from openrobot_demo.sensors.realsense_shared import RealSenseDevicePool
+                    RealSenseDevicePool.get_device(self.serial, self.width, self.height, self.fps)
+                    self._use_shared_rs = True
+                    logger.info("[CameraDriver] RealSense shared pipeline attached (%s).", self.serial)
+                    return True
+                else:
+                    import pyrealsense2 as rs
+                    self._rs_pipeline = rs.pipeline()
+                    self._rs_config = rs.config()
+                    self._rs_config.enable_stream(rs.stream.color, self.width, self.height, rs.format.bgr8, self.fps)
+                    self._rs_config.enable_stream(rs.stream.depth, self.width, self.height, rs.format.z16, self.fps)
+                    self._rs_pipeline.start(self._rs_config)
+                    self._rs_align = rs.align(rs.stream.color)
+                    self._rs_spatial = rs.spatial_filter()
+                    self._rs_temporal = rs.temporal_filter()
+                    self._rs_hole = rs.hole_filling_filter()
+                    logger.info("[CameraDriver] RealSense connected.")
+                    return True
             except Exception as e:
                 logger.error(f"[CameraDriver] RealSense error: {e}")
                 return False
@@ -88,7 +102,6 @@ class CameraDriver:
         if self.camera_type == "usb":
             if self._fallback_synthetic:
                 # Generate a synthetic test pattern when no real camera is available
-                import numpy as np
                 rgb = np.zeros((self.height, self.width, 3), dtype=np.uint8)
                 # Draw a simple colored rectangle to simulate an object
                 rgb[self.height//3:2*self.height//3, self.width//3:2*self.width//3] = [200, 100, 50]
@@ -107,16 +120,28 @@ class CameraDriver:
             return rgb, None
 
         elif self.camera_type == "realsense":
+            import cv2
+            if self._use_shared_rs:
+                from openrobot_demo.sensors.realsense_shared import RealSenseDevicePool
+                color_frame, depth_frame = RealSenseDevicePool.capture_frames(self.serial, apply_filters=True)
+                if not color_frame or not depth_frame:
+                    return None, None
+                rgb = np.asanyarray(color_frame.get_data())
+                rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
+                depth = np.asanyarray(depth_frame.get_data())
+                return rgb, depth
             if self._rs_pipeline is None:
                 return None, None
             import pyrealsense2 as rs
-            import cv2
             frames = self._rs_pipeline.wait_for_frames()
             aligned = self._rs_align.process(frames)
             color_frame = aligned.get_color_frame()
             depth_frame = aligned.get_depth_frame()
             if not color_frame or not depth_frame:
                 return None, None
+            depth_frame = self._rs_spatial.process(depth_frame)
+            depth_frame = self._rs_temporal.process(depth_frame)
+            depth_frame = self._rs_hole.process(depth_frame)
             rgb = np.asanyarray(color_frame.get_data())
             rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB)
             depth = np.asanyarray(depth_frame.get_data())
@@ -136,9 +161,13 @@ class CameraDriver:
         if self.camera_type == "usb" and self._cap is not None:
             self._cap.release()
             self._cap = None
-        elif self.camera_type == "realsense" and self._rs_pipeline is not None:
-            self._rs_pipeline.stop()
-            self._rs_pipeline = None
+        elif self.camera_type == "realsense":
+            if self._use_shared_rs and self.serial:
+                from openrobot_demo.sensors.realsense_shared import RealSenseDevicePool
+                RealSenseDevicePool.release_device(self.serial)
+            elif self._rs_pipeline is not None:
+                self._rs_pipeline.stop()
+                self._rs_pipeline = None
         elif self.camera_type == "mujoco" and self._mujoco_renderer is not None:
             self._mujoco_renderer.close()
             self._mujoco_renderer = None

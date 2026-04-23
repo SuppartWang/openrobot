@@ -1,4 +1,4 @@
-"""RealSense RGB sensor for OpenRobotDemo."""
+"""RealSense RGB sensor for OpenRobotDemo — uses shared device pool."""
 
 import logging
 import time
@@ -7,13 +7,13 @@ from typing import Optional
 import numpy as np
 
 from .base import SensorChannel, PerceptionData
+from .realsense_shared import RealSenseDevicePool
 
 logger = logging.getLogger(__name__)
 
 
 try:
     import pyrealsense2 as rs
-
     _RS_AVAILABLE = True
 except Exception as exc:
     _RS_AVAILABLE = False
@@ -21,7 +21,7 @@ except Exception as exc:
 
 
 class RealSenseRGBSensor(SensorChannel):
-    """Capture aligned RGB frames from an Intel RealSense camera."""
+    """Capture aligned RGB frames from a shared RealSense pipeline."""
 
     name = "realsense_rgb"
 
@@ -31,28 +31,22 @@ class RealSenseRGBSensor(SensorChannel):
         width: int = 640,
         height: int = 480,
         fps: int = 30,
+        serial: Optional[str] = None,
     ):
         self.source_id = source_id
         self.width = width
         self.height = height
         self.fps = fps
-        self._pipeline: Optional["rs.pipeline"] = None
-        self._config: Optional["rs.config"] = None
-        self._align: Optional["rs.align"] = None
+        self.serial = serial
         self._started = False
 
-        if _RS_AVAILABLE:
+        if _RS_AVAILABLE and serial:
             try:
-                self._pipeline = rs.pipeline()
-                self._config = rs.config()
-                self._config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-                self._config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
-                profile = self._pipeline.start(self._config)
-                self._align = rs.align(rs.stream.color)
+                RealSenseDevicePool.get_device(serial, width, height, fps)
                 self._started = True
-                logger.info("[RealSenseRGBSensor] Camera started (%dx%d@%d)", width, height, fps)
+                logger.info("[RealSenseRGBSensor] Shared pipeline attached (%s)", serial)
             except Exception as exc:
-                logger.warning("[RealSenseRGBSensor] Failed to start camera: %s", exc)
+                logger.warning("[RealSenseRGBSensor] Failed to attach shared pipeline: %s", exc)
                 self._started = False
 
     def is_available(self) -> bool:
@@ -62,9 +56,7 @@ class RealSenseRGBSensor(SensorChannel):
         if not self.is_available():
             raise RuntimeError("RealSenseRGBSensor: camera not available")
 
-        frames = self._pipeline.wait_for_frames(timeout_ms=5000)
-        aligned_frames = self._align.process(frames)
-        color_frame = aligned_frames.get_color_frame()
+        color_frame, _ = RealSenseDevicePool.capture_frames(self.serial, apply_filters=False)
         if not color_frame:
             raise RuntimeError("RealSenseRGBSensor: no color frame returned")
 
@@ -82,10 +74,7 @@ class RealSenseRGBSensor(SensorChannel):
         )
 
     def close(self) -> None:
-        if self._pipeline and self._started:
-            try:
-                self._pipeline.stop()
-                logger.info("[RealSenseRGBSensor] Camera stopped")
-            except Exception as exc:
-                logger.warning("[RealSenseRGBSensor] Error stopping camera: %s", exc)
+        if self.serial:
+            RealSenseDevicePool.release_device(self.serial)
+            logger.info("[RealSenseRGBSensor] Released shared pipeline")
         self._started = False

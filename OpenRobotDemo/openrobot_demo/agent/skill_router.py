@@ -219,6 +219,8 @@ class SkillRouter:
             if len(obj_pose) == 3:
                 obj_pose = obj_pose + [0.0, 0.0, 0.0, 1.0]
             self._context["object_pose_base"] = obj_pose
+            # Alias for support plate operations
+            self._context["plate_pose_base"] = obj_pose
         elif skill_name == "grasp_point_predictor":
             self._context["grasp_pose"] = result.get("grasp_pose")
             self._context["pre_grasp_pose"] = result.get("pre_grasp_pose")

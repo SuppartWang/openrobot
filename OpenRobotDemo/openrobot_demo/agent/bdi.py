@@ -223,8 +223,6 @@ class Intent:
 
     def advance(self):
         self.current_step_idx += 1
-        if self.current_step_idx >= len(self.plan_steps):
-            self.status = IntentStatus.COMPLETED
 
     def to_dict(self) -> Dict[str, Any]:
         return {

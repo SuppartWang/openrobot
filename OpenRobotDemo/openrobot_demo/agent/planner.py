@@ -11,7 +11,7 @@ import os
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Callable
 
 from dotenv import load_dotenv
 
@@ -25,20 +25,48 @@ logger = logging.getLogger(__name__)
 # PromptEngine: dynamic prompt assembly
 # ------------------------------------------------------------------
 class PromptEngine:
-    """Assemble LLM prompts dynamically from components."""
+    """Assemble LLM prompts dynamically from components.
 
-    SYSTEM_HEADER = """你是一个快速的具身机器人任务规划器。你的目标是将用户指令分解为一系列可执行的机器人技能调用。
+    Design inspired by:
+    - Inner Monologue (Huang et al., 2023): closed-loop feedback after each step
+    - MLDT (Wu et al., 2024): multi-level task decomposition
+    - SayCan (Brohan et al., 2023): affordance-grounded planning
+    """
 
-规则：
-1. thought 必须用中文写，不超过一句话。
-2. 每次只能调用一个技能。
-3. 复用上下文中已有的信息，除非必要不要重复拍照。
-4. 如果之前有类似任务的经验，优先参考经验中的参数和建议。
-5. 只输出纯 JSON，不要 markdown，不要多余文字。
+    SYSTEM_HEADER = """你是 OpenRobot，一台配备双臂 YHRG S1 机械臂、平行夹爪和 RealSense 视觉系统的具身智能机器人。
 
-输出格式：
+你的核心能力：
+1. 理解用户高层指令 → 分解为子目标 → 选择并调用机器人技能
+2. 每步执行后评估结果，根据环境反馈调整计划（闭环重规划）
+3. 识别任务进展，判断何时完成、何时需要重试或改变策略
+
+可用技能类型：
+- camera_capture: 拍摄 RGB/深度图像，获取环境信息
+- arm_state_reader: 读取机械臂关节位置、末端位姿
+- vision_3d_estimator: 从图像中估计目标物体的 3D 位姿
+- grasp_point_predictor: 预测最佳抓取点
+- arm_motion_executor: 执行关节/笛卡尔空间运动
+- fabric_manipulation: 布料操作（捏合、提起、套入、保持、取下）
+- vla_policy_executor: 端到端视觉-语言-动作策略
+
+规划规则（基于 Inner Monologue 闭环反馈）：
+1. 任务分解：先将复杂指令分解为 2-4 个子目标，按依赖顺序执行
+2. 每步思考：用中文一句话说明当前状态和下一步意图
+3. 环境感知优先：执行动作前，如果环境状态不确定，先拍照确认
+4. 闭环检查：每步执行后，系统会反馈执行结果。你必须据此判断：
+   - 成功 → 继续下一步
+   - 失败/不确定 → 重新感知环境或调整策略
+   - 场景变化 → 重新分解任务
+5. 安全约束：
+   - 运动速度不超过 0.8
+   - 关节运动范围限制在 [-170°, 170°]（基座）等安全范围内
+   - 碰撞检测启用，避免自碰撞
+6. 只输出纯 JSON，不要 markdown，不要多余文字
+
+输出格式（ReAct 风格，每轮一步）：
 {"thought":"...","action":"skill_call","skill":"...","args":{}}
-或 {"thought":"任务完成","action":"finish","result":"..."}
+或 {"thought":"...","action":"replan","reason":"..."}
+或 {"thought":"任务全部完成","action":"finish","result":"..."}
 """
 
     def __init__(self):
@@ -67,14 +95,50 @@ class PromptEngine:
                 parts.append(json.dumps(ex, ensure_ascii=False))
         return "\n".join(parts)
 
-    def build_user_prompt(self, instruction: str, state_summary: str = "", turn: int = 0) -> str:
-        if turn == 0:
-            content = f"任务指令：{instruction}\n\n"
-        else:
-            content = f"当前状态：\n{state_summary}\n\n"
+    def build_user_prompt(
+        self,
+        instruction: str,
+        state_summary: str = "",
+        turn: int = 0,
+        feedback_history: Optional[List[Dict[str, Any]]] = None,
+        task_progress: Optional[str] = None,
+    ) -> str:
+        """Build user prompt with Inner Monologue style closed-loop feedback.
 
-        content += "请输出你的下一步动作（纯 JSON）："
-        return content
+        Args:
+            instruction: Original user instruction
+            state_summary: Current robot/world state
+            turn: Conversation turn number
+            feedback_history: List of {step, skill, result, observation} dicts
+            task_progress: Textual description of task progress
+        """
+        parts = []
+
+        if turn == 0:
+            parts.append(f"【任务指令】{instruction}")
+            parts.append("\n【任务分解】请先将此任务分解为 2-4 个按依赖顺序排列的子目标，然后从第一个子目标开始逐步执行。")
+        else:
+            parts.append(f"【任务指令】{instruction}")
+
+        if task_progress:
+            parts.append(f"\n【任务进展】{task_progress}")
+
+        if feedback_history:
+            parts.append("\n【执行历史 / 内心独白】")
+            for i, fb in enumerate(feedback_history[-8:], 1):  # Last 8 steps
+                skill = fb.get("skill", "?")
+                result = "成功" if fb.get("success") else "失败"
+                msg = fb.get("message", "")
+                obs = fb.get("observation", "")
+                parts.append(f"  步骤{i}: [{skill}] → {result} | {msg}")
+                if obs:
+                    parts.append(f"    观察: {obs}")
+
+        if state_summary:
+            parts.append(f"\n【当前状态】\n{state_summary}")
+
+        parts.append("\n【思考与行动】基于上述历史和当前状态，请输出下一步（纯 JSON）：")
+        return "\n".join(parts)
 
 
 # ------------------------------------------------------------------
@@ -96,6 +160,7 @@ class LLMPlanner:
         self._experience_retriever = experience_retriever
         self._skill_router = skill_router
         self._prompt_engine = PromptEngine()
+        self._observers: List[Callable] = []
 
         if self.api_key:
             try:
@@ -187,6 +252,21 @@ class LLMPlanner:
     # ------------------------------------------------------------------
     # ReAct iterative API
     # ------------------------------------------------------------------
+    def add_observer(self, observer: Callable):
+        if observer not in self._observers:
+            self._observers.append(observer)
+
+    def remove_observer(self, observer: Callable):
+        if observer in self._observers:
+            self._observers.remove(observer)
+
+    def _notify(self, event_type: str, data: Dict[str, Any]):
+        for obs in self._observers:
+            try:
+                obs(event_type, data)
+            except Exception as exc:
+                logger.debug("Planner observer notify failed: %s", exc)
+
     def start_task(self, instruction: str):
         """Reset conversation state for a new task."""
         self._instruction = instruction
@@ -196,14 +276,29 @@ class LLMPlanner:
         self._mock_plan_steps = self._mock_plan(instruction)
         self._mock_idx = 0
         self._turn = 0
+        self._notify("llm_start", {"instruction": instruction})
 
-    def next_action(self, state_summary: str = "") -> Dict[str, Any]:
-        """Ask the LLM for the next single action given current state."""
+    def next_action(
+        self,
+        state_summary: str = "",
+        feedback_history: Optional[List[Dict[str, Any]]] = None,
+        task_progress: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Ask the LLM for the next single action given current state.
+
+        Implements Inner Monologue style closed-loop planning:
+        - feedback_history: execution results from previous steps
+        - task_progress: textual description of overall task progress
+        """
         if self._client is None:
             return self._next_mock_action()
 
         content = self._prompt_engine.build_user_prompt(
-            self._instruction, state_summary, self._turn
+            self._instruction,
+            state_summary=state_summary,
+            turn=self._turn,
+            feedback_history=feedback_history,
+            task_progress=task_progress,
         )
         self._messages.append({"role": "user", "content": content})
         self._turn += 1
@@ -249,8 +344,24 @@ class LLMPlanner:
             if not text:
                 logger.warning("LLM returned empty response.")
                 return self._next_mock_action()
-            data = json.loads(text)
-            self._messages.append({"role": "assistant", "content": json.dumps(data)})
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError:
+                # Try to extract JSON from malformed response
+                data = self._extract_json_from_text(text)
+                if data is None:
+                    logger.warning("LLM returned non-JSON response: %s", text[:200])
+                    return self._next_mock_action()
+
+            self._messages.append({"role": "assistant", "content": json.dumps(data, ensure_ascii=False)})
+            self._notify("llm_react", {
+                "turn": self._turn,
+                "thought": data.get("thought", ""),
+                "action": data.get("action", ""),
+                "skill": data.get("skill", ""),
+                "args": data.get("args", {}),
+                "raw": data,
+            })
             return data
 
         except Exception as e:
@@ -281,14 +392,31 @@ class LLMPlanner:
             )
             text = self._strip_fences(response.choices[0].message.content.strip())
             data = json.loads(text)
-            return data.get("plan", [])
+            plan = data.get("plan", [])
+            self._notify("llm_plan", {"instruction": instruction, "plan": plan})
+            return plan
         except Exception as e:
             logger.error(f"LLM planning failed: {e}")
-            return self._mock_plan(instruction)
+            plan = self._mock_plan(instruction)
+            self._notify("llm_plan", {"instruction": instruction, "plan": plan, "fallback": True})
+            return plan
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+        """Try to extract a JSON object from text that may contain extra content."""
+        # Find the first { and last }
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            return None
+        try:
+            return json.loads(text[start:end+1])
+        except json.JSONDecodeError:
+            return None
+
     def _next_mock_action(self) -> Dict[str, Any]:
         if self._mock_idx < len(self._mock_plan_steps):
             step = self._mock_plan_steps[self._mock_idx]
@@ -310,14 +438,50 @@ class LLMPlanner:
         """Deterministic fallback plan for common tasks."""
         instr = instruction.lower()
 
-        # Fabric manipulation demo (3-day task)
+        # Sub-goal specific plans for fabric manipulation
+        if any(k in instr for k in ["拍摄", "rgb", "相机", "拍照", "capture"]):
+            return [{"skill": "camera_capture", "args": {"return_depth": True}}]
+
+        if any(k in instr for k in ["检测", "定位", "3d", "vision", "estimat"]):
+            target = "筒状布料" if "布料" in instr else "目标物体"
+            return [
+                {"skill": "camera_capture", "args": {"return_depth": True}},
+                {"skill": "vision_3d_estimator", "args": {"rgb_frame": "rgb_frame", "target_name": target, "end_effector_pose": "end_effector_pose"}},
+            ]
+
+        if any(k in instr for k in ["捏合", "pinch", "抓取", "夹取"]):
+            return [
+                {"skill": "fabric_manipulation", "args": {"operation": "pinch_edge", "fabric_center": "object_pose_base", "fabric_diameter_m": 0.08}},
+            ]
+
+        if any(k in instr for k in ["提起", "lift", "举高", "提升"]):
+            return [
+                {"skill": "fabric_manipulation", "args": {"operation": "lift", "height_m": 0.10}},
+            ]
+
+        if any(k in instr for k in ["套入", "insert", "下降", "套上", "覆盖", "上方", "对准", "移动"]):
+            return [
+                {"skill": "fabric_manipulation", "args": {"operation": "insert", "plate_center": "plate_pose_base", "plate_height_m": 0.05, "insert_depth_m": 0.06}},
+            ]
+
+        if any(k in instr for k in ["保持", "hold", "等待", "wait"]):
+            return [
+                {"skill": "fabric_manipulation", "args": {"operation": "hold_wait", "wait_seconds": 5.0}},
+            ]
+
+        if any(k in instr for k in ["取下", "withdraw", "取出", "释放", "放开"]):
+            return [
+                {"skill": "fabric_manipulation", "args": {"operation": "withdraw", "lift_height_m": 0.10}},
+            ]
+
+        # Full fabric manipulation demo (3-day task)
         if any(k in instr for k in ["布料", "套", "支撑板", "fabric", "cloth", "tube"]):
             return [
                 {"skill": "camera_capture", "args": {"return_depth": True}},
                 {"skill": "vision_3d_estimator", "args": {"rgb_frame": "rgb_frame", "target_name": "筒状布料", "end_effector_pose": "end_effector_pose"}},
                 {"skill": "fabric_manipulation", "args": {"operation": "pinch_edge", "fabric_center": "object_pose_base", "fabric_diameter_m": 0.08}},
                 {"skill": "fabric_manipulation", "args": {"operation": "lift", "height_m": 0.10}},
-                {"skill": "vision_3d_estimator", "args": {"rgb_frame": "rgb_frame", "target_name": "铝合金支撑板", "end_effector_pose": "end_effector_pose"}},
+                {"skill": "vision_3d_estimator", "args": {"rgb_frame": "rgb_frame", "target_name": "水平支撑板", "end_effector_pose": "end_effector_pose"}},
                 {"skill": "fabric_manipulation", "args": {"operation": "insert", "plate_center": "plate_pose_base", "plate_height_m": 0.05, "insert_depth_m": 0.06}},
                 {"skill": "fabric_manipulation", "args": {"operation": "hold_wait", "wait_seconds": 5.0}},
                 {"skill": "fabric_manipulation", "args": {"operation": "withdraw", "lift_height_m": 0.10}},

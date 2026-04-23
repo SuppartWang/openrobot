@@ -1,6 +1,7 @@
 """DualArmController: synchronized control of two YHRG S1 arms."""
 
 import logging
+import math
 import time
 from enum import Enum
 from typing import List, Optional
@@ -60,7 +61,7 @@ class DualArmController:
     def get_ee_pose(self, side: ArmSide) -> List[float]:
         """Return current end-effector pose [x,y,z,qx,qy,qz,qw]."""
         kin = self.left_kin if side == ArmSide.LEFT else self.right_kin
-        joints = self.get_pos(side)
+        joints = self.get_pos(side)[:6]
         return kin.forward_quat(joints)
 
     # ------------------------------------------------------------------
@@ -78,6 +79,34 @@ class DualArmController:
             arm.joint_control(interp)
             time.sleep(0.02)
 
+    def _cartesian_interpolate(self, side: ArmSide, target_pose_7dof: List[float],
+                                duration: float, q0: List[float]):
+        """Cartesian-space linear interpolation (position + quaternion).
+        Mimics SDK SingleArmController.move_to_pose().
+        """
+        kin = self.left_kin if side == ArmSide.LEFT else self.right_kin
+        arm = self.left_arm if side == ArmSide.LEFT else self.right_arm
+        current_tcp = kin.forward_quat(q0)
+
+        steps = max(1, int(duration / 0.02))
+        for i in range(1, steps + 1):
+            alpha = i / steps
+            # Position linear interpolation
+            pos = [(1 - alpha) * current_tcp[j] + alpha * target_pose_7dof[j] for j in range(3)]
+            # Quaternion linear interpolation + normalize (same as SDK)
+            quat = [(1 - alpha) * current_tcp[3 + j] + alpha * target_pose_7dof[3 + j] for j in range(4)]
+            norm = math.sqrt(sum(q * q for q in quat))
+            quat = [q / norm for q in quat]
+
+            interp_pose = pos + quat
+            q_target = kin.inverse_quat(interp_pose, q0)
+            if q_target is None:
+                raise RuntimeError(
+                    f"[DualArmController] IK failed at step {i}/{steps} for {side.value} arm"
+                )
+            arm.joint_control(q_target[:6])
+            time.sleep(0.02)
+
     def move_cartesian(
         self,
         side: ArmSide,
@@ -85,14 +114,32 @@ class DualArmController:
         duration: float = 1.0,
         current_joints: Optional[List[float]] = None,
     ):
-        """Move one arm to target Cartesian pose via IK + joint interpolation."""
-        kin = self.left_kin if side == ArmSide.LEFT else self.right_kin
+        """Move one arm to target Cartesian pose via Cartesian-space interpolation + IK.
+
+        Accepts:
+          - 3-DOF position [x, y, z]  -> default forward-facing orientation (identity)
+          - 6-DOF Euler  [x, y, z, rx, ry, rz]  -> uses inverse_eular
+          - 7-DOF Quaternion [x, y, z, qx, qy, qz, qw]  -> uses inverse_quat
+        """
         arm = self.left_arm if side == ArmSide.LEFT else self.right_arm
-        q0 = current_joints if current_joints is not None else arm.get_pos()
-        q_target = kin.inverse_quat(target_pose, q0)
-        if q_target is None:
-            raise RuntimeError(f"[DualArmController] IK failed for {side.value} arm to {target_pose}")
-        self.move_joint(side, q_target, duration)
+        q0 = current_joints if current_joints is not None else arm.get_pos()[:6]
+
+        # Parse target to 7-DOF quaternion for Cartesian interpolation
+        target_7dof = None
+        if len(target_pose) == 3:
+            # 3-DOF: default forward-facing orientation (arm zero pose is forward)
+            target_7dof = list(target_pose) + [0.0, 0.0, 0.0, 1.0]
+        elif len(target_pose) == 6:
+            # 6-DOF Euler -> convert to quaternion
+            from scipy.spatial.transform import Rotation as R
+            rot = R.from_euler("xyz", target_pose[3:6], degrees=False).as_quat()
+            target_7dof = list(target_pose[:3]) + list(rot)
+        elif len(target_pose) == 7:
+            target_7dof = target_pose[:7]
+        else:
+            raise ValueError(f"[DualArmController] Invalid target_pose length: {len(target_pose)} (expected 3, 6, or 7)")
+
+        self._cartesian_interpolate(side, target_7dof, duration, q0)
 
     # ------------------------------------------------------------------
     # Dual-arm synchronized motion
@@ -107,22 +154,28 @@ class DualArmController:
         """
         Move both arms to their respective Cartesian targets synchronously.
 
-        Uses leader-follower interpolation: both arms step in lockstep.
+        Uses Cartesian-space interpolation (same as SDK) with lockstep execution.
+        Accepts 3-DOF, 6-DOF Euler, or 7-DOF Quaternion for each arm.
         """
-        left_q0 = self.left_arm.get_pos()
-        right_q0 = self.right_arm.get_pos()
-        left_qt = self.left_kin.inverse_quat(left_target, left_q0)
-        right_qt = self.right_kin.inverse_quat(right_target, right_q0)
+        def _to_7dof(target):
+            if len(target) == 3:
+                return list(target) + [0.0, 0.0, 0.0, 1.0]
+            elif len(target) == 6:
+                from scipy.spatial.transform import Rotation as R
+                rot = R.from_euler("xyz", target[3:6], degrees=False).as_quat()
+                return list(target[:3]) + list(rot)
+            elif len(target) == 7:
+                return target[:7]
+            else:
+                raise ValueError(f"Invalid target length: {len(target)} (expected 3, 6, or 7)")
 
-        if left_qt is None:
-            raise RuntimeError("[DualArmController] Left arm IK failed")
-        if right_qt is None:
-            raise RuntimeError("[DualArmController] Right arm IK failed")
+        left_q0 = self.left_arm.get_pos()[:6]
+        right_q0 = self.right_arm.get_pos()[:6]
+        left_target_7dof = _to_7dof(left_target)
+        right_target_7dof = _to_7dof(right_target)
 
-        left_q0_6 = left_q0[:6]
-        right_q0_6 = right_q0[:6]
-        left_qt_6 = left_qt[:6]
-        right_qt_6 = right_qt[:6]
+        left_tcp = self.left_kin.forward_quat(left_q0)
+        right_tcp = self.right_kin.forward_quat(right_q0)
 
         steps = max(1, int(duration / 0.02))
         logger.info(
@@ -134,10 +187,26 @@ class DualArmController:
 
         for i in range(1, steps + 1):
             alpha = i / steps
-            left_interp = [(1 - alpha) * c + alpha * t for c, t in zip(left_q0_6, left_qt_6)]
-            right_interp = [(1 - alpha) * c + alpha * t for c, t in zip(right_q0_6, right_qt_6)]
-            self.left_arm.joint_control(left_interp)
-            self.right_arm.joint_control(right_interp)
+            # Left arm interpolation
+            l_pos = [(1 - alpha) * left_tcp[j] + alpha * left_target_7dof[j] for j in range(3)]
+            l_quat = [(1 - alpha) * left_tcp[3 + j] + alpha * left_target_7dof[3 + j] for j in range(4)]
+            l_norm = math.sqrt(sum(q * q for q in l_quat))
+            l_quat = [q / l_norm for q in l_quat]
+            l_qt = self.left_kin.inverse_quat(l_pos + l_quat, left_q0)
+            if l_qt is None:
+                raise RuntimeError(f"[DualArmController] Left arm IK failed at step {i}/{steps}")
+
+            # Right arm interpolation
+            r_pos = [(1 - alpha) * right_tcp[j] + alpha * right_target_7dof[j] for j in range(3)]
+            r_quat = [(1 - alpha) * right_tcp[3 + j] + alpha * right_target_7dof[3 + j] for j in range(4)]
+            r_norm = math.sqrt(sum(q * q for q in r_quat))
+            r_quat = [q / r_norm for q in r_quat]
+            r_qt = self.right_kin.inverse_quat(r_pos + r_quat, right_q0)
+            if r_qt is None:
+                raise RuntimeError(f"[DualArmController] Right arm IK failed at step {i}/{steps}")
+
+            self.left_arm.joint_control(l_qt[:6])
+            self.right_arm.joint_control(r_qt[:6])
             time.sleep(0.02)
 
     def dual_grasp(
@@ -149,11 +218,17 @@ class DualArmController:
         grasp_duration: float = 0.5,
     ):
         """
-        Synchronized dual-arm grasp sequence:
-        1. Move both arms to pre-grasp poses (above targets)
-        2. Descend to grasp poses
-        3. Close grippers
+        Synchronized dual-arm grasp sequence.
+        If 3-DOF targets are given, they are converted to downward-facing 7-DOF poses
+        (grasping typically requires downward orientation).
         """
+        # Ensure downward orientation for grasping if 3-DOF is given
+        ORIENTATION_DOWNWARD = [-0.7071, 0.0, 0.0, 0.7071]
+        if len(left_target) == 3:
+            left_target = list(left_target) + ORIENTATION_DOWNWARD
+        if len(right_target) == 3:
+            right_target = list(right_target) + ORIENTATION_DOWNWARD
+
         # Pre-grasp: offset Z by +5cm
         left_pre = left_target.copy()
         left_pre[2] += 0.05

@@ -133,20 +133,54 @@ class ArmMotionExecutor(SkillInterface):
             }
 
         elif command_type == "cartesian":
-            pose = target_values[:7]  # [x, y, z, qx, qy, qz, qw]
-            xyz = pose[:3]
+            import math
+            import time as _time
+            n = len(target_values)
+            if n == 3:
+                # 3-DOF: default forward-facing orientation (arm zero pose is forward)
+                target_7dof = list(target_values[:3]) + [0.0, 0.0, 0.0, 1.0]
+            elif n == 6:
+                # 6-DOF Euler -> convert to quaternion for interpolation
+                from scipy.spatial.transform import Rotation as R
+                rot = R.from_euler("xyz", target_values[3:6], degrees=False).as_quat()
+                target_7dof = list(target_values[:3]) + list(rot)
+            elif n == 7:
+                target_7dof = target_values[:7]
+            else:
+                return {"success": False, "message": f"Invalid cartesian target length: {n} (expected 3, 6, or 7)"}
+
+            xyz = target_7dof[:3]
             ok, reason = self._safety.check_cartesian_target(xyz)
             if not ok:
                 return {"success": False, "message": f"Safety check failed: {reason}"}
 
+            # Cartesian-space interpolation (same as SDK move_to_pose)
             current_joints = self._arm.get_pos()
-            joints = self._solver.inverse_quat(pose, current_joints)
-            if joints is None:
-                return {"success": False, "message": "IK failed: target unreachable."}
+            current_tcp = self._solver.forward_quat(current_joints)
 
-            # Re-run as joint command
-            return self.execute(command_type="joint", target_values=joints,
-                                speed=speed, use_interpolation=use_interpolation)
+            duration = 2.0 / max(0.1, speed)
+            steps = max(1, int(duration / 0.02))
+            for i in range(1, steps + 1):
+                alpha = i / steps
+                pos = [(1 - alpha) * current_tcp[j] + alpha * target_7dof[j] for j in range(3)]
+                quat = [(1 - alpha) * current_tcp[3 + j] + alpha * target_7dof[3 + j] for j in range(4)]
+                norm = math.sqrt(sum(q * q for q in quat))
+                quat = [q / norm for q in quat]
+                interp_pose = pos + quat
+                if n == 6:
+                    joints = self._solver.inverse_eular(target_values[:6], current_joints)
+                else:
+                    joints = self._solver.inverse_quat(interp_pose, current_joints)
+                if joints is None:
+                    return {"success": False, "message": f"IK failed at step {i}/{steps}"}
+                self._arm.joint_control(joints[:6])
+                _time.sleep(0.02)
+
+            return {
+                "success": True,
+                "message": "Cartesian motion executed.",
+                "execution_time_ms": int((_time.time() - start_t) * 1000),
+            }
 
         elif command_type == "gripper":
             pos = float(np.clip(target_values[0], 0.0, 2.0))

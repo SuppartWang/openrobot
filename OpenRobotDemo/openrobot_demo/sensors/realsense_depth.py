@@ -1,4 +1,4 @@
-"""RealSense depth sensor for OpenRobotDemo."""
+"""RealSense depth sensor for OpenRobotDemo — uses shared device pool."""
 
 import logging
 import time
@@ -7,12 +7,12 @@ from typing import Optional
 import numpy as np
 
 from .base import SensorChannel, PerceptionData
+from .realsense_shared import RealSenseDevicePool
 
 logger = logging.getLogger(__name__)
 
 try:
     import pyrealsense2 as rs
-
     _RS_AVAILABLE = True
 except Exception as exc:
     _RS_AVAILABLE = False
@@ -20,7 +20,7 @@ except Exception as exc:
 
 
 class RealSenseDepthSensor(SensorChannel):
-    """Capture aligned depth frames from an Intel RealSense camera."""
+    """Capture aligned depth frames from a shared RealSense pipeline."""
 
     name = "realsense_depth"
 
@@ -30,28 +30,22 @@ class RealSenseDepthSensor(SensorChannel):
         width: int = 640,
         height: int = 480,
         fps: int = 30,
+        serial: Optional[str] = None,
     ):
         self.source_id = source_id
         self.width = width
         self.height = height
         self.fps = fps
-        self._pipeline: Optional["rs.pipeline"] = None
-        self._config: Optional["rs.config"] = None
-        self._align: Optional["rs.align"] = None
+        self.serial = serial
         self._started = False
 
-        if _RS_AVAILABLE:
+        if _RS_AVAILABLE and serial:
             try:
-                self._pipeline = rs.pipeline()
-                self._config = rs.config()
-                self._config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
-                self._config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
-                profile = self._pipeline.start(self._config)
-                self._align = rs.align(rs.stream.color)
+                RealSenseDevicePool.get_device(serial, width, height, fps)
                 self._started = True
-                logger.info("[RealSenseDepthSensor] Camera started (%dx%d@%d)", width, height, fps)
+                logger.info("[RealSenseDepthSensor] Shared pipeline attached (%s)", serial)
             except Exception as exc:
-                logger.warning("[RealSenseDepthSensor] Failed to start camera: %s", exc)
+                logger.warning("[RealSenseDepthSensor] Failed to attach shared pipeline: %s", exc)
                 self._started = False
 
     def is_available(self) -> bool:
@@ -61,9 +55,7 @@ class RealSenseDepthSensor(SensorChannel):
         if not self.is_available():
             raise RuntimeError("RealSenseDepthSensor: camera not available")
 
-        frames = self._pipeline.wait_for_frames(timeout_ms=5000)
-        aligned_frames = self._align.process(frames)
-        depth_frame = aligned_frames.get_depth_frame()
+        _, depth_frame = RealSenseDevicePool.capture_frames(self.serial, apply_filters=True)
         if not depth_frame:
             raise RuntimeError("RealSenseDepthSensor: no depth frame returned")
 
@@ -89,17 +81,10 @@ class RealSenseDepthSensor(SensorChannel):
         """Return color camera intrinsics if available."""
         if not self.is_available():
             return None
-        try:
-            profile = self._pipeline.get_active_profile()
-            return profile.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
-        except Exception:
-            return None
+        return RealSenseDevicePool.get_intrinsics(self.serial)
 
     def close(self) -> None:
-        if self._pipeline and self._started:
-            try:
-                self._pipeline.stop()
-                logger.info("[RealSenseDepthSensor] Camera stopped")
-            except Exception as exc:
-                logger.warning("[RealSenseDepthSensor] Error stopping camera: %s", exc)
+        if self.serial:
+            RealSenseDevicePool.release_device(self.serial)
+            logger.info("[RealSenseDepthSensor] Released shared pipeline")
         self._started = False

@@ -58,18 +58,42 @@ class BDIAgent:
         self.max_total_steps = max_total_steps
         self._total_steps = 0
         self._instruction = ""
+        self._observers: List[Any] = []
+        self._last_perception: Dict[str, Any] = {}
+        self._execution_log: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
     # Main execution entry
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Observer / callback interface for dashboard / external UIs
+    # ------------------------------------------------------------------
+    def add_observer(self, observer):
+        """Add an observer callable.  observer(event_type, data_dict)"""
+        if observer not in self._observers:
+            self._observers.append(observer)
+
+    def remove_observer(self, observer):
+        if observer in self._observers:
+            self._observers.remove(observer)
+
+    def _notify(self, event_type: str, data: Dict[str, Any]):
+        for obs in self._observers:
+            try:
+                obs(event_type, data)
+            except Exception as exc:
+                logger.debug("Observer notify failed: %s", exc)
+
     def execute(self, instruction: str, sensors: Optional[List] = None) -> Dict[str, Any]:
         """Execute a user instruction autonomously.
 
         Returns a summary dict with success status, execution trace, etc.
         """
         self._instruction = instruction
+        self._execution_log = []
         logger.info("[BDIAgent] Starting execution of: %s", instruction)
         start_time = time.time()
+        self._notify("task_start", {"instruction": instruction})
 
         # 1. Decompose into goal tree
         available_skills = self.skill_router.list_skills()
@@ -88,9 +112,11 @@ class BDIAgent:
                 # Perceive
                 if sensors:
                     self._perceive(sensors)
+                    self._notify("perception", self._last_perception)
 
                 # Update beliefs
                 self.beliefs.update_from_world_model(self.world_model)
+                self._notify("beliefs", {"beliefs": self.beliefs.to_dict()})
 
                 # Check if all goals complete
                 if self.goal_tree.is_complete():
@@ -106,6 +132,10 @@ class BDIAgent:
                 # Manage intent
                 if self.current_intent is None or self.current_intent.is_complete():
                     self._select_next_intent()
+                    self._notify("intent", {
+                        "current_intent": self.current_intent.to_dict() if self.current_intent else None,
+                        "goal_tree": self.goal_tree.to_dict() if self.goal_tree else None,
+                    })
                     if self.current_intent is None:
                         logger.info("[BDIAgent] No more active intents. Waiting...")
                         time.sleep(0.5)
@@ -113,6 +143,7 @@ class BDIAgent:
 
                 # Execute one step of current intent
                 result = self._execute_intent_step()
+                self._notify("step_result", result)
 
                 if not result.get("success", False):
                     # Failure → reflect and recover
@@ -129,6 +160,7 @@ class BDIAgent:
 
         elapsed = time.time() - start_time
         summary = self._build_summary(finished, elapsed)
+        self._notify("task_end", summary)
         logger.info("[BDIAgent] Execution finished: success=%s, time=%.1fs, steps=%d",
                     summary["success"], elapsed, self._total_steps)
         return summary
@@ -143,6 +175,14 @@ class BDIAgent:
                 try:
                     reading = sensor.capture()
                     self.world_model.ingest(reading)
+                    # Cache latest perception for dashboard
+                    if hasattr(reading, 'modality') and hasattr(reading, 'payload'):
+                        src = getattr(reading, 'source_id', sensor.source_id)
+                        self._last_perception[src] = {
+                            "modality": reading.modality,
+                            "payload": reading.payload,
+                            "timestamp": getattr(reading, 'timestamp', time.time()),
+                        }
                 except Exception as exc:
                     logger.debug("Sensor %s capture failed: %s", sensor.source_id, exc)
 
@@ -150,7 +190,12 @@ class BDIAgent:
     # Intent management
     # ------------------------------------------------------------------
     def _select_next_intent(self):
-        """Find the next active leaf goal and create an intent for it."""
+        """Find the next active leaf goal and create an intent for it.
+
+        Uses MLDT-style multi-level decomposition: the planner receives the
+        high-level leaf goal and produces an initial plan.  The plan is then
+        executed step-by-step with closed-loop feedback (Inner Monologue).
+        """
         if self.goal_tree is None:
             return
 
@@ -165,10 +210,10 @@ class BDIAgent:
         # Build state summary for planner
         state_summary = self._build_agent_state_summary(leaf)
 
-        # Ask planner for a plan (list of skill calls)
+        # Ask planner for an initial plan (MLDT: goal -> sub-goals -> actions)
         plan = self.planner.plan(leaf.description)
         if not plan:
-            logger.warning("[BDIAgent] Planner returned empty plan for goal '%s'", leaf.goal_id)
+            logger.warning("[BDIAgent] Planner returned empty plan for goal '%s', will use reactive mode", leaf.goal_id)
             plan = []
 
         self.current_intent = Intent(
@@ -176,6 +221,10 @@ class BDIAgent:
             plan_steps=plan,
             status=IntentStatus.ACTIVE,
         )
+        self._notify("intent", {
+            "current_intent": self.current_intent.to_dict(),
+            "goal_tree": self.goal_tree.to_dict() if self.goal_tree else None,
+        })
 
     def _find_next_active_leaf(self, goal: Goal) -> Optional[Goal]:
         """DFS to find the first pending or blocked leaf goal."""
@@ -199,16 +248,31 @@ class BDIAgent:
     # Intent execution
     # ------------------------------------------------------------------
     def _execute_intent_step(self) -> Dict[str, Any]:
-        """Execute one step of the current intent."""
+        """Execute one step of the current intent with closed-loop feedback.
+
+        If the pre-generated plan is exhausted or a step fails, the agent
+        asks the LLM planner for the next action reactively (Inner Monologue).
+        """
         if self.current_intent is None:
             return {"success": False, "message": "No active intent"}
 
         step = self.current_intent.current_step()
+
+        # If plan exhausted or empty, ask LLM reactively for next step
         if step is None:
-            self.current_intent.status = IntentStatus.COMPLETED
-            # Mark corresponding goal as completed
-            self._mark_goal_completed(self.current_intent.goal_id)
-            return {"success": True, "message": "Intent completed"}
+            if self.current_intent.plan_steps:
+                # Pre-generated plan finished
+                self.current_intent.status = IntentStatus.COMPLETED
+                self._mark_goal_completed(self.current_intent.goal_id)
+                return {"success": True, "message": "Intent completed"}
+            # Reactive mode: ask LLM for next action
+            step = self._reactive_plan_next_step()
+            if step is None:
+                self.current_intent.status = IntentStatus.FAILED
+                self._increment_goal_failure(self.current_intent.goal_id)
+                return {"success": False, "message": "Reactive planning returned no action"}
+            # Append reactive step to plan
+            self.current_intent.plan_steps.append(step)
 
         skill_name = step.get("skill")
         args = step.get("args", {})
@@ -230,12 +294,132 @@ class BDIAgent:
 
         if result.get("success", False):
             self.current_intent.advance()
+            # Check if overall task progress suggests we should replan
+            progress = self._check_task_progress()
+            if progress.get("should_replan", False):
+                logger.info("[BDIAgent] Task progress indicates replanning needed: %s", progress.get("reason", ""))
+                new_step = self._reactive_plan_next_step()
+                if new_step:
+                    self.current_intent.plan_steps.append(new_step)
         else:
             self.current_intent.status = IntentStatus.FAILED
-            # Mark corresponding goal
             self._increment_goal_failure(self.current_intent.goal_id)
 
         return result
+
+    def _reactive_plan_next_step(self) -> Optional[Dict[str, Any]]:
+        """Ask the LLM planner for the next action reactively (Inner Monologue mode).
+
+        Builds feedback history from execution history and calls planner.next_action().
+        """
+        if self.current_intent is None:
+            return None
+
+        leaf = self._find_goal_by_id(self.current_intent.goal_id)
+        state_summary = self._build_agent_state_summary(leaf)
+        feedback = self._build_feedback_history()
+        progress = self._format_task_progress()
+
+        try:
+            action = self.planner.next_action(
+                state_summary=state_summary,
+                feedback_history=feedback,
+                task_progress=progress,
+            )
+            if action.get("action") == "finish":
+                return None  # Task complete
+            if action.get("action") == "skill_call":
+                return {
+                    "skill": action.get("skill", ""),
+                    "args": action.get("args", {}),
+                }
+            if action.get("action") == "replan":
+                # LLM explicitly asked to replan
+                logger.info("[BDIAgent] LLM requested replan: %s", action.get("reason", ""))
+                return self._reactive_plan_next_step()
+        except Exception as exc:
+            logger.warning("[BDIAgent] Reactive planning failed: %s", exc)
+
+        return None
+
+    def _build_feedback_history(self) -> List[Dict[str, Any]]:
+        """Format execution history into Inner Monologue feedback entries."""
+        if self.current_intent is None:
+            return []
+        feedback = []
+        for h in self.current_intent.execution_history:
+            result = h.get("result", {})
+            entry = {
+                "skill": h.get("skill", "?"),
+                "success": result.get("success", False),
+                "message": result.get("message", "")[:120],
+                "observation": self._format_step_observation(h),
+            }
+            feedback.append(entry)
+        return feedback
+
+    def _format_step_observation(self, history_entry: Dict[str, Any]) -> str:
+        """Generate a natural language observation of the step's effect."""
+        skill = history_entry.get("skill", "")
+        result = history_entry.get("result", {})
+        if not result.get("success"):
+            return "执行失败，需要调整策略或重新感知环境。"
+        if skill == "camera_capture":
+            return "已获取最新环境图像。"
+        if skill == "vision_3d_estimator":
+            return "已更新目标物体位置估计。"
+        if skill == "arm_motion_executor":
+            return "机械臂已完成指定运动。"
+        if skill == "fabric_manipulation":
+            return "布料操作步骤已完成。"
+        return "步骤执行成功。"
+
+    def _check_task_progress(self) -> Dict[str, Any]:
+        """Analyze task progress and decide if replanning is needed.
+
+        Inspired by Inner Monologue's Scene feedback.
+        """
+        if self.current_intent is None or not self.current_intent.execution_history:
+            return {"should_replan": False}
+
+        last = self.current_intent.execution_history[-1]
+        result = last.get("result", {})
+
+        # If last action failed, definitely replan
+        if not result.get("success", False):
+            return {"should_replan": True, "reason": "上一步执行失败，需要重新规划"}
+
+        # If we've been on the same intent for too many steps without progress
+        if len(self.current_intent.execution_history) > self.max_steps_per_intent:
+            return {"should_replan": True, "reason": "当前意图执行步数过多，可能需要调整策略"}
+
+        # Check if goal conditions are satisfied based on execution history patterns
+        goal = self._find_goal_by_id(self.current_intent.goal_id)
+        if goal and goal.completion_criteria:
+            # Simple heuristic: if we've executed enough diverse skills, consider progress good
+            skills_used = {h.get("skill", "") for h in self.current_intent.execution_history}
+            if len(skills_used) >= len(goal.completion_criteria):
+                return {"should_replan": False, "progress": "good"}
+
+        return {"should_replan": False}
+
+    def _format_task_progress(self) -> str:
+        """Generate a textual summary of overall task progress for the LLM."""
+        if self.goal_tree is None:
+            return "尚未开始任务。"
+
+        total = len(self.goal_tree.sub_goals)
+        completed = sum(1 for g in self.goal_tree.sub_goals if g.is_complete())
+        failed = sum(1 for g in self.goal_tree.sub_goals if g.is_failed())
+        active = self.current_intent.goal_id if self.current_intent else "无"
+
+        lines = [f"总体进度: {completed}/{total} 个子目标已完成"]
+        if failed > 0:
+            lines.append(f"失败子目标: {failed} 个")
+        lines.append(f"当前活跃目标: {active}")
+        if self.current_intent:
+            lines.append(f"当前意图执行步数: {self.current_intent.current_step_idx}/{len(self.current_intent.plan_steps)}")
+        return "; ".join(lines)
 
     # ------------------------------------------------------------------
     # Reflection and recovery
