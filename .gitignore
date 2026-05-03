@@ -73,3 +73,11 @@ Robot\ Property\ Rights\ Experiment/
 code\ \(1\).txt
 step1_capture_detect*.py
 YHRG_control/S1_SDK_V2/
+
+# Temporary / backup files
+*.zip
+kimi-export-*.md
+
+# Legacy submodule残留目录（保持本地，不纳入版本控制）
+0-RoboClaw_Agibot/
+1-RoboClaw_SJTU/
