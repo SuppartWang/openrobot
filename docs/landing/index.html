@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenRobot - 通用具身智能体框架</title>
+    <meta name="description" content="OpenRobot：以大语言模型为智慧基座，构建跨硬件形态、跨任务域的通用具身智能体框架。">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans antialiased overflow-x-hidden">
+
+    <!-- 导航栏 -->
+    <nav class="fixed top-0 left-0 right-0 z-50 bg-slate-950/80 backdrop-blur-md border-b border-slate-800/60">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
+                        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                        </svg>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight">OpenRobot</span>
+                </div>
+                <div class="hidden md:flex items-center gap-8">
+                    <a href="#philosophy" class="text-sm text-slate-300 hover:text-cyan-400 transition-colors">核心理念</a>
+                    <a href="#layers" class="text-sm text-slate-300 hover:text-cyan-400 transition-colors">五层架构</a>
+                    <a href="#principles" class="text-sm text-slate-300 hover:text-cyan-400 transition-colors">设计原则</a>
+                    <a href="#architecture" class="text-sm text-slate-300 hover:text-cyan-400 transition-colors">系统架构</a>
+                    <a href="#flow" class="text-sm text-slate-300 hover:text-cyan-400 transition-colors">数据流</a>
+                </div>
+                <a href="https://github.com/SuppartWang/openrobot" target="_blank" rel="noopener" class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm font-medium transition-all">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                    GitHub
+                </a>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero -->
+    <section class="relative min-h-screen flex items-center justify-center pt-16 overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-b from-cyan-900/20 via-slate-950 to-slate-950"></div>
+        <div class="absolute inset-0" id="particles"></div>
+        
+        <div class="relative z-10 max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <div class="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-sm mb-8 animate-fade-in">
+                <span class="relative flex h-2 w-2">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-cyan-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-cyan-500"></span>
+                </span>
+                Embodied AI Framework v2.0
+            </div>
+            
+            <h1 class="text-5xl md:text-7xl font-bold tracking-tight mb-6 leading-tight">
+                <span class="bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-blue-500 to-purple-600">
+                    像人一样感知、思考、行动、学习
+                </span>
+            </h1>
+            
+            <p class="text-xl md:text-2xl text-slate-400 max-w-3xl mx-auto mb-10 leading-relaxed">
+                OpenRobot 是一个以大语言模型为智慧基座，以类脑分层架构为骨架的
+                <span class="text-cyan-400 font-medium">通用具身智能体框架</span>。
+            </p>
+            
+            <div class="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+                <a href="https://github.com/SuppartWang/openrobot" target="_blank" rel="noopener" class="px-8 py-4 rounded-full bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-semibold shadow-lg shadow-cyan-500/25 transition-all hover:scale-105">
+                    查看 GitHub 仓库
+                </a>
+                <a href="#philosophy" class="px-8 py-4 rounded-full bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold transition-all">
+                    了解设计理念
+                </a>
+            </div>
+
+            <!-- 指标卡片 -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
+                <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-sm">
+                    <div class="text-2xl font-bold text-cyan-400">L1–L5</div>
+                    <div class="text-xs text-slate-500 mt-1">类脑分层</div>
+                </div>
+                <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-sm">
+                    <div class="text-2xl font-bold text-blue-400">Skill</div>
+                    <div class="text-xs text-slate-500 mt-1">一切皆 Skill</div>
+                </div>
+                <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-sm">
+                    <div class="text-2xl font-bold text-purple-400">LLM</div>
+                    <div class="text-xs text-slate-500 mt-1">智慧基座</div>
+                </div>
+                <div class="p-4 rounded-2xl bg-slate-900/60 border border-slate-800 backdrop-blur-sm">
+                    <div class="text-2xl font-bold text-emerald-400">Real ↔ Sim</div>
+                    <div class="text-xs text-slate-500 mt-1">仿真/实机双模式</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 核心理念 -->
+    <section id="philosophy" class="py-24 relative">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                <div>
+                    <h2 class="text-3xl md:text-4xl font-bold mb-6">
+                        <span class="text-cyan-400">#</span> 核心理念
+                    </h2>
+                    <p class="text-lg text-slate-300 leading-relaxed mb-6">
+                        OpenRobot 不是在写一个“能控制机械臂的程序”，而是在构建一个
+                        <span class="text-cyan-400 font-medium">像人一样感知、思考、行动、学习的通用机器人操作系统</span>。
+                    </p>
+                    <p class="text-slate-400 leading-relaxed mb-8">
+                        其中 LLM 是大脑，Skill 是肌肉记忆，WorldModel 是心理模型，ExperienceSystem 是长期记忆，而分层架构保证了复杂任务可被拆解、被调试、被迁移。
+                    </p>
+                    <ul class="space-y-4">
+                        <li class="flex items-start gap-3">
+                            <div class="w-6 h-6 rounded-full bg-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                            <span class="text-slate-300">跨硬件形态：机械臂、底盘、无人机、四足统一抽象</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="w-6 h-6 rounded-full bg-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                            <span class="text-slate-300">跨任务域：感知、认知、规划、执行、学习全链路 Skill 化</span>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="w-6 h-6 rounded-full bg-cyan-500/20 flex items-center justify-center flex-shrink-0 mt-0.5">
+                                <svg class="w-3.5 h-3.5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+                            </div>
+                            <span class="text-slate-300">持续进化：执行即学习，经验自动沉淀并注入决策</span>
+                        </li>
+                    </ul>
+                </div>
+                <div class="relative">
+                    <div class="absolute -inset-4 bg-gradient-to-r from-cyan-500/20 to-purple-600/20 rounded-3xl blur-2xl"></div>
+                    <div class="relative bg-slate-900/80 border border-slate-800 rounded-2xl p-8">
+                        <div class="text-center text-slate-500 text-sm mb-6">OpenRobot 设计范式</div>
+                        <div class="space-y-4">
+                            <div class="flex items-center gap-4 p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                                <div class="w-10 h-10 rounded-lg bg-purple-500/20 flex items-center justify-center text-purple-400 font-bold">感</div>
+                                <div>
+                                    <div class="font-medium">感知 Perception</div>
+                                    <div class="text-sm text-slate-500">多模态传感器统一接入</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-center"><div class="w-0.5 h-6 bg-gradient-to-b from-purple-500 to-blue-500"></div></div>
+                            <div class="flex items-center gap-4 p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                                <div class="w-10 h-10 rounded-lg bg-blue-500/20 flex items-center justify-center text-blue-400 font-bold">知</div>
+                                <div>
+                                    <div class="font-medium">认知 Cognition</div>
+                                    <div class="text-sm text-slate-500">WorldModel + LLM 推理</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-center"><div class="w-0.5 h-6 bg-gradient-to-b from-blue-500 to-cyan-500"></div></div>
+                            <div class="flex items-center gap-4 p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                                <div class="w-10 h-10 rounded-lg bg-cyan-500/20 flex items-center justify-center text-cyan-400 font-bold">规</div>
+                                <div>
+                                    <div class="font-medium">规划 Planning</div>
+                                    <div class="text-sm text-slate-500">BDI + ReAct + Harness 编排</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-center"><div class="w-0.5 h-6 bg-gradient-to-b from-cyan-500 to-emerald-500"></div></div>
+                            <div class="flex items-center gap-4 p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                                <div class="w-10 h-10 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 font-bold">行</div>
+                                <div>
+                                    <div class="font-medium">执行 Execution</div>
+                                    <div class="text-sm text-slate-500">Skill Router + 安全控制</div>
+                                </div>
+                            </div>
+                            <div class="flex justify-center"><div class="w-0.5 h-6 bg-gradient-to-b from-emerald-500 to-amber-500"></div></div>
+                            <div class="flex items-center gap-4 p-4 rounded-xl bg-slate-800/50 border border-slate-700">
+                                <div class="w-10 h-10 rounded-lg bg-amber-500/20 flex items-center justify-center text-amber-400 font-bold">学</div>
+                                <div>
+                                    <div class="font-medium">学习 Learning</div>
+                                    <div class="text-sm text-slate-500">Experience System 闭环</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 五层架构 -->
+    <section id="layers" class="py-24 bg-slate-900/30 border-y border-slate-800/60">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4">类脑五层架构</h2>
+                <p class="text-slate-400 max-w-2xl mx-auto">将人类大脑功能映射为机器人必备能力，实现从底层监控到高层认知的完整闭环。</p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <div class="group p-6 rounded-2xl bg-slate-900 border border-slate-800 hover:border-rose-500/50 transition-all hover:-translate-y-1">
+                    <div class="w-12 h-12 rounded-xl bg-rose-500/10 flex items-center justify-center mb-4 group-hover:bg-rose-500/20 transition-colors">
+                        <span class="text-xl font-bold text-rose-400">L1</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">基础生命调控</h3>
+                    <p class="text-slate-400 text-sm mb-4">系统监控、健康检查、异常告警，确保机器人稳定运行。</p>
+                    <div class="text-xs text-rose-400 font-mono">RobotMonitor</div>
+                </div>
+
+                <div class="group p-6 rounded-2xl bg-slate-900 border border-slate-800 hover:border-amber-500/50 transition-all hover:-translate-y-1">
+                    <div class="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center mb-4 group-hover:bg-amber-500/20 transition-colors">
+                        <span class="text-xl font-bold text-amber-400">L2</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">感知加工</h3>
+                    <p class="text-slate-400 text-sm mb-4">多模态感知统一接入：RGB、深度、点云、力觉、触觉、本体感。</p>
+                    <div class="text-xs text-amber-400 font-mono">PerceptionBus · SensorChannel</div>
+                </div>
+
+                <div class="group p-6 rounded-2xl bg-slate-900 border border-slate-800 hover:border-emerald-500/50 transition-all hover:-translate-y-1">
+                    <div class="w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-4 group-hover:bg-emerald-500/20 transition-colors">
+                        <span class="text-xl font-bold text-emerald-400">L3</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">运控执行</h3>
+                    <p class="text-slate-400 text-sm mb-4">运动规划、轨迹插值、安全网关、碰撞防护。</p>
+                    <div class="text-xs text-emerald-400 font-mono">MotionPlanning · SafetyGateway</div>
+                </div>
+
+                <div class="group p-6 rounded-2xl bg-slate-900 border border-slate-800 hover:border-blue-500/50 transition-all hover:-translate-y-1">
+                    <div class="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center mb-4 group-hover:bg-blue-500/20 transition-colors">
+                        <span class="text-xl font-bold text-blue-400">L4</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">高级认知</h3>
+                    <p class="text-slate-400 text-sm mb-4">LLM Agent、空间推理、记忆、任务分解与反思。</p>
+                    <div class="text-xs text-blue-400 font-mono">LLMPlanner · BDIAgent · WorldModel</div>
+                </div>
+
+                <div class="group p-6 rounded-2xl bg-slate-900 border border-slate-800 hover:border-purple-500/50 transition-all hover:-translate-y-1 md:col-span-2 lg:col-span-2">
+                    <div class="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4 group-hover:bg-purple-500/20 transition-colors">
+                        <span class="text-xl font-bold text-purple-400">L5</span>
+                    </div>
+                    <h3 class="text-lg font-semibold mb-2">情绪动机</h3>
+                    <p class="text-slate-400 text-sm mb-4">奖励引擎、任务调度、价值判断，让机器人拥有目标导向的自主行为。</p>
+                    <div class="text-xs text-purple-400 font-mono">RewardEngine · TaskScheduler</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 设计原则 -->
+    <section id="principles" class="py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4">关键设计原则</h2>
+                <p class="text-slate-400 max-w-2xl mx-auto">六大原则定义了 OpenRobot 的架构边界与扩展方向。</p>
+            </div>
+
+            <div class="space-y-6">
+                <div class="principle-card p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all">
+                    <div class="flex items-start gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold mb-2">LLM 是智慧基座，但不直接操作底层</h3>
+                            <p class="text-slate-400 text-sm leading-relaxed">宏观决策由 BDIAgent 负责，微观步骤由 LLMPlanner 通过 ReAct 循环生成。VLM 只输出结构化认知参数，不直接做决策。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="principle-card p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all">
+                    <div class="flex items-start gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold mb-2">一切能力 Skill 化</h3>
+                            <p class="text-slate-400 text-sm leading-relaxed">任何“输入信号 → 输出信号”的算法都封装为 Skill：基础 Skill、复合 Skill、算法 Skill。每个 Skill 自带 schema 自描述，自动生成 OpenAI function schema。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="principle-card p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all">
+                    <div class="flex items-start gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold mb-2">通用硬件抽象层</h3>
+                            <p class="text-slate-400 text-sm leading-relaxed">RobotInterface 作为所有可运动结构的顶层抽象；ManipulatorInterface 作为机械臂专用扩展。同一套逻辑可复用于不同硬件形态。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="principle-card p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all">
+                    <div class="flex items-start gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold mb-2">经验驱动的持续学习闭环</h3>
+                            <p class="text-slate-400 text-sm leading-relaxed">执行轨迹写入 ExperienceLibrary，LLMPlanner 自动检索相关经验并注入 system prompt，实现“做中学”。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="principle-card p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all">
+                    <div class="flex items-start gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold mb-2">真实世界信号全覆盖</h3>
+                            <p class="text-slate-400 text-sm leading-relaxed">SensorChannel 抽象让 RGB、深度、点云、力觉、触觉、IMU、LiDAR、超声波、轮式里程计等信号统一格式进入系统。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="principle-card p-6 rounded-2xl bg-slate-900/60 border border-slate-800 hover:border-cyan-500/30 transition-all">
+                    <div class="flex items-start gap-4">
+                        <div class="w-10 h-10 rounded-lg bg-cyan-500/10 flex items-center justify-center flex-shrink-0">
+                            <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold mb-2">仿真 ↔ 实机双模式</h3>
+                            <p class="text-slate-400 text-sm leading-relaxed">YHRGAdapter 自带 Mock 回退；S1_SDK 提供 MuJoCo 可视化仿真；YHRG_control.py 也加入了无头 MuJoCo 仿真，便于无硬件环境下调试。</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 系统架构图 -->
+    <section id="architecture" class="py-24 bg-slate-900/30 border-y border-slate-800/60">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4">系统架构全景</h2>
+                <p class="text-slate-400 max-w-2xl mx-auto">从用户输入到硬件执行的分层控制体系。</p>
+            </div>
+
+            <div class="relative max-w-5xl mx-auto">
+                <div class="absolute -inset-4 bg-gradient-to-b from-cyan-500/10 to-purple-600/10 rounded-3xl blur-2xl"></div>
+                <div class="relative space-y-4">
+                    <div class="arch-layer p-5 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="w-8 h-8 rounded-lg bg-indigo-500/20 flex items-center justify-center text-indigo-400 text-sm font-bold">1</div>
+                            <h3 class="font-semibold">输入层 Input Channels</h3>
+                        </div>
+                        <p class="text-sm text-slate-400 pl-11">CLI / HTTP / Voice —— 统一的 pluggable 入口</p>
+                    </div>
+                    <div class="flex justify-center"><div class="w-0.5 h-4 bg-gradient-to-b from-indigo-500 to-violet-500"></div></div>
+                    <div class="arch-layer p-5 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center text-violet-400 text-sm font-bold">2</div>
+                            <h3 class="font-semibold">运行时层 Runtime Layer</h3>
+                        </div>
+                        <p class="text-sm text-slate-400 pl-11">RobotQueue —— FIFO 任务队列、指数退避重试、持久化 hook</p>
+                    </div>
+                    <div class="flex justify-center"><div class="w-0.5 h-4 bg-gradient-to-b from-violet-500 to-fuchsia-500"></div></div>
+                    <div class="arch-layer p-5 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="w-8 h-8 rounded-lg bg-fuchsia-500/20 flex items-center justify-center text-fuchsia-400 text-sm font-bold">3</div>
+                            <h3 class="font-semibold">Agent 层</h3>
+                        </div>
+                        <p class="text-sm text-slate-400 pl-11">LLMPlanner（ReAct）+ SkillRouter —— 宏观规划与 Skill 分发</p>
+                    </div>
+                    <div class="flex justify-center"><div class="w-0.5 h-4 bg-gradient-to-b from-fuchsia-500 to-pink-500"></div></div>
+                    <div class="arch-layer p-5 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="w-8 h-8 rounded-lg bg-pink-500/20 flex items-center justify-center text-pink-400 text-sm font-bold">4</div>
+                            <h3 class="font-semibold">Skill 层</h3>
+                        </div>
+                        <p class="text-sm text-slate-400 pl-11">基础 Skill + 复合 Skill + 算法 Skill，schema 自描述</p>
+                    </div>
+                    <div class="flex justify-center"><div class="w-0.5 h-4 bg-gradient-to-b from-pink-500 to-cyan-500"></div></div>
+                    <div class="grid md:grid-cols-3 gap-4">
+                        <div class="arch-layer p-4 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                            <h4 class="font-semibold text-cyan-400 text-sm mb-1">感知层</h4>
+                            <p class="text-xs text-slate-400">Sensor Registry</p>
+                        </div>
+                        <div class="arch-layer p-4 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                            <h4 class="font-semibold text-blue-400 text-sm mb-1">世界模型</h4>
+                            <p class="text-xs text-slate-400">World Model</p>
+                        </div>
+                        <div class="arch-layer p-4 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                            <h4 class="font-semibold text-purple-400 text-sm mb-1">经验系统</h4>
+                            <p class="text-xs text-slate-400">Experience System</p>
+                        </div>
+                    </div>
+                    <div class="flex justify-center"><div class="w-0.5 h-4 bg-gradient-to-b from-cyan-500 to-emerald-500"></div></div>
+                    <div class="arch-layer p-5 rounded-xl bg-gradient-to-r from-slate-800/80 to-slate-900/80 border border-slate-700/50">
+                        <div class="flex items-center gap-3 mb-2">
+                            <div class="w-8 h-8 rounded-lg bg-emerald-500/20 flex items-center justify-center text-emerald-400 text-sm font-bold">5</div>
+                            <h3 class="font-semibold">硬件/控制层</h3>
+                        </div>
+                        <p class="text-sm text-slate-400 pl-11">DualArmController + YHRGAdapter + SafetyGateway + Interpolator</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- 数据流闭环 -->
+    <section id="flow" class="py-24">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                <div>
+                    <h2 class="text-3xl md:text-4xl font-bold mb-6">
+                        <span class="text-cyan-400">#</span> 数据流闭环
+                    </h2>
+                    <p class="text-lg text-slate-300 leading-relaxed mb-8">
+                        从用户指令到执行反馈，再到经验沉淀，形成持续学习闭环。
+                    </p>
+                    <ol class="space-y-4">
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">1</span>
+                            <span class="text-slate-300 pt-1">Sensor capture（传感器采集）</span>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">2</span>
+                            <span class="text-slate-300 pt-1">WorldModel.ingest()（世界模型更新）</span>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">3</span>
+                            <span class="text-slate-300 pt-1">build_state_summary()（状态文本化摘要）</span>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">4</span>
+                            <span class="text-slate-300 pt-1">Planner.next_action()（LLM 生成下一步）</span>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">5</span>
+                            <span class="text-slate-300 pt-1">SkillRouter.execute()（执行 Skill）</span>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">6</span>
+                            <span class="text-slate-300 pt-1">Record step/result（记录执行轨迹）</span>
+                        </li>
+                        <li class="flex items-start gap-4">
+                            <span class="w-8 h-8 rounded-full bg-cyan-500/20 flex items-center justify-center text-cyan-400 text-sm font-bold flex-shrink-0">7</span>
+                            <span class="text-slate-300 pt-1">Update context（更新上下文）</span>
+                        </li>
+                    </ol>
+                </div>
+                <div class="relative">
+                    <div class="absolute -inset-4 bg-gradient-to-r from-cyan-500/10 to-purple-600/10 rounded-3xl blur-2xl"></div>
+                    <div class="relative p-8 rounded-2xl bg-slate-900/80 border border-slate-800">
+                        <div class="text-center text-slate-500 text-sm mb-8">经验驱动的学习闭环</div>
+                        <div class="flex flex-col items-center gap-4">
+                            <div class="w-full p-4 rounded-xl bg-slate-800/60 border border-slate-700 text-center">
+                                <div class="text-cyan-400 font-semibold">执行轨迹</div>
+                            </div>
+                            <svg class="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+                            <div class="w-full p-4 rounded-xl bg-slate-800/60 border border-slate-700 text-center">
+                                <div class="text-blue-400 font-semibold">ExperienceRecorder</div>
+                            </div>
+                            <svg class="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
+                            <div class="w-full p-4 rounded-xl bg-slate-800/60 border border-slate-700 text-center">
+                                <div class="text-purple-400 font-semibold">ExperienceLibrary (SQLite)</div>
+                            </div>
+                            <svg class="w-6 h-6 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 10l7-7m0 0l7 7m-7-7v18"/></svg>
+                            <div class="w-full p-4 rounded-xl bg-slate-800/60 border border-slate-700 text-center">
+                                <div class="text-amber-400 font-semibold">LLMPlanner Prompt 注入</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- GitHub CTA -->
+    <section class="py-24 relative overflow-hidden">
+        <div class="absolute inset-0 bg-gradient-to-r from-cyan-900/30 to-blue-900/30"></div>
+        <div class="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNjAiIGhlaWdodD0iNjAiIHZpZXdCb3g9IjAgMCA2MCA2MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48ZyBmaWxsPSJub25lIiBmaWxsLXJ1bGU9ImV2ZW5vZGQiPjxnIGZpbGw9IiMxZTI5M2IiIGZpbGwtb3BhY2l0eT0iMC40Ij48cGF0aCBkPSJNMzYgMzRoLTJ2LTRoMnY0em0wLTZ2LTRoLTJ2NGgyem0tNiA2aC00djJoNHYtMnptLTYgMGgtNHYyaDR2LTJ6bS02IDBoLTR2MmgydjJoMnYtMnptLTYtMTBoNHYtMmgtNHYyem0tNiAwaDR2LTJoLTR2MnptMzYgMTBoNHYtMmgtNHYyem0tNiAwaDR2LTJoLTR2MnpNMjQgMjRoLTR2MmgydjJoMnYtMnptLTYgMGgtNHYyaDR2LTJ6bTYgMTBoNHYtMmgtNHYyem0tNiAwaDR2LTJoLTR2MnpNMzAgMzBoLTJ2NGgydi00em0tMTIgMGgtMnY0aDJ2LTR6bTYgMGgtMnY0aDJ2LTR6bTQtMTBoLTN2M2gzdi0zem0tNiAwaC0zdjNoM3YtM3ptLTEgMTJoLTN2M2gzdi0zem0tNSAwaC0zdjNoM3YtM3ptLTEgMTJoLTN2M2gzdi0zem0tNSAwaC0zdjNoM3YtM3ptLTMgMTJoLTN2M2gzdi0zem0tNSAwaC0zdjNoM3YtM3oiLz48L2c+PC9nPjwvc3ZnPg==')] opacity-20"></div>
+        <div class="relative max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
+            <h2 class="text-3xl md:text-4xl font-bold mb-6">开始构建你的具身智能体</h2>
+            <p class="text-lg text-slate-300 mb-10 max-w-2xl mx-auto">
+                OpenRobot 正在持续进化。欢迎 Star、Fork、提交 Issue 或 PR，共同推动通用机器人操作系统的发展。
+            </p>
+            <a href="https://github.com/SuppartWang/openrobot" target="_blank" rel="noopener" class="inline-flex items-center gap-3 px-8 py-4 rounded-full bg-white text-slate-900 font-bold hover:bg-slate-200 transition-all hover:scale-105 shadow-2xl">
+                <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/></svg>
+                访问 GitHub 仓库
+            </a>
+        </div>
+    </section>
+
+    <!-- 页脚 -->
+    <footer class="py-8 border-t border-slate-800/60 bg-slate-950">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col md:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-2">
+                <div class="w-6 h-6 rounded bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+                    <svg class="w-3.5 h-3.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
+                </div>
+                <span class="font-semibold">OpenRobot</span>
+            </div>
+            <p class="text-sm text-slate-500">
+                © 2026 OpenRobot Project. Open source under MIT License.
+            </p>
+            <a href="https://github.com/SuppartWang/openrobot" target="_blank" rel="noopener" class="text-sm text-slate-400 hover:text-cyan-400 transition-colors">
+                github.com/SuppartWang/openrobot
+            </a>
+        </div>
+    </footer>
+
+    <script src="script.js"></script>
+</body>
+</html>
