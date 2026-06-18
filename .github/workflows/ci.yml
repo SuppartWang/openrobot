@@ -27,17 +27,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pip-
 
-      - name: Install dependencies
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libosmesa6-dev libgl1-mesa-glx libglfw3 patchelf
+
+      - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r OpenRobotDemo/requirements.txt
 
       - name: Run simulation tests
+        env:
+          MUJOCO_GL: osmesa
         run: |
           cd OpenRobotDemo
           pytest tests/test_sim_pick_place.py -v
 
       - name: Run minimal pick-and-place demo
+        env:
+          MUJOCO_GL: osmesa
         run: |
           cd OpenRobotDemo
           python examples/sim_pick_place.py
