@@ -1,7 +1,7 @@
 <mujoco model="franka_rgb_scene">
   <compiler angle="radian" meshdir="assets" autolimits="true"/>
 
-  <option timestep="0.002" iterations="50" tolerance="1e-10" solver="Newton"
+  <option timestep="0.001" iterations="50" tolerance="1e-10" solver="Newton"
           gravity="0 0 -9.81" cone="pyramidal" impratio="10">
     <flag warmstart="enable"/>
   </option>
@@ -12,9 +12,9 @@
   </visual>
 
   <default>
-    <joint armature="0.1" damping="2" limited="true"/>
+    <joint armature="0.1" damping="5" limited="true"/>
     <geom contype="1" conaffinity="1" friction="1 0.005 0.001" rgba="0.3 0.3 0.3 1"/>
-    <position ctrllimited="true" ctrlrange="-100 100" kp="1000" kv="100"/>
+    <position ctrllimited="true" ctrlrange="-100 100" kp="500" kv="100"/>
   </default>
 
   <asset>
@@ -44,7 +44,7 @@
     </body>
 
     <!-- Target object on table -->
-    <body name="cube" pos="0.5 0.1 0.45">
+    <body name="cube" pos="0.55 0.15 0.45">
       <freejoint/>
       <geom name="cube_geom" type="box" size="0.03 0.03 0.03" rgba="1 0.8 0.2 1" mass="0.05"/>
     </body>
@@ -132,7 +132,7 @@
 
   <keyframe>
     <key name="home"
-         qpos="0.4 0.0 0.45 1 0 0 0 0 1.57 0 0.3 0 0 0 0 0"
+         qpos="0.55 0.15 0.45 1 0 0 0 0 1.57 0 0.3 0 0 0 0 0"
          ctrl="0 1.57 0 0.3 0 0 0 0 0"/>
   </keyframe>
 </mujoco>

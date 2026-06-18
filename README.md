@@ -14,21 +14,33 @@ Human brain functions → Embodied robot必备功能
 
 ## Quick Start
 
+The fastest way to try OpenRobot is the **OpenRobotDemo simulation stack**.
+It runs entirely on your laptop with MuJoCo and does not require robot hardware
+or cloud API keys.
+
 ```bash
-# Create virtual environment (Python 3.12 recommended)
-/opt/homebrew/bin/python3.12 -m venv .venv
+# 1. Install dependencies (creates .venv automatically)
+./install.sh
+
+# 2. Activate the virtual environment
 source .venv/bin/activate
-pip install -r requirements.txt
 
-# Run unit tests
-PYTHONPATH=.:openrobot_core pytest tests/ -v
+# 3. Run the minimal pick-and-place demo
+cd OpenRobotDemo
+python examples/sim_pick_place.py
 
-# Run L1+L2+L3 closed-loop demo
-python scripts/demo_l1_l2_l3_closed_loop.py
-
-# Run end-to-end agent demo (uses mock plan without OPENAI_API_KEY)
-python scripts/demo_end_to_end_agent.py
+# 4. (Optional) Run the full-stack ReAct demo
+#    Requires LLM/VLM API keys configured in OpenRobotDemo/.env
+python scripts/demo_simulation_full_stack.py
 ```
+
+You can also use Docker:
+
+```bash
+docker-compose up --build
+```
+
+For more details, see [OpenRobotDemo/docs/quickstart.md](OpenRobotDemo/docs/quickstart.md).
 
 ## Architecture
 

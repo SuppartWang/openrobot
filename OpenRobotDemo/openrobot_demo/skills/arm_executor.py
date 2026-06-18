@@ -135,13 +135,13 @@ class ArmMotionExecutor(SkillInterface):
         elif command_type == "cartesian":
             import math
             import time as _time
+            from scipy.spatial.transform import Rotation as R, Slerp
             n = len(target_values)
             if n == 3:
                 # 3-DOF: default forward-facing orientation (arm zero pose is forward)
                 target_7dof = list(target_values[:3]) + [0.0, 0.0, 0.0, 1.0]
             elif n == 6:
                 # 6-DOF Euler -> convert to quaternion for interpolation
-                from scipy.spatial.transform import Rotation as R
                 rot = R.from_euler("xyz", target_values[3:6], degrees=False).as_quat()
                 target_7dof = list(target_values[:3]) + list(rot)
             elif n == 7:
@@ -154,18 +154,18 @@ class ArmMotionExecutor(SkillInterface):
             if not ok:
                 return {"success": False, "message": f"Safety check failed: {reason}"}
 
-            # Cartesian-space interpolation (same as SDK move_to_pose)
+            # Cartesian-space interpolation with SLERP for orientation
             current_joints = self._arm.get_pos()
             current_tcp = self._solver.forward_quat(current_joints)
 
             duration = 2.0 / max(0.1, speed)
             steps = max(1, int(duration / 0.02))
+            key_rots = R.from_quat([current_tcp[3:7], target_7dof[3:7]])
+            slerp = Slerp([0, 1], key_rots)
             for i in range(1, steps + 1):
                 alpha = i / steps
                 pos = [(1 - alpha) * current_tcp[j] + alpha * target_7dof[j] for j in range(3)]
-                quat = [(1 - alpha) * current_tcp[3 + j] + alpha * target_7dof[3 + j] for j in range(4)]
-                norm = math.sqrt(sum(q * q for q in quat))
-                quat = [q / norm for q in quat]
+                quat = slerp([alpha]).as_quat()[0].tolist()
                 interp_pose = pos + quat
                 if n == 6:
                     joints = self._solver.inverse_eular(target_values[:6], current_joints)
@@ -173,8 +173,9 @@ class ArmMotionExecutor(SkillInterface):
                     joints = self._solver.inverse_quat(interp_pose, current_joints)
                 if joints is None:
                     return {"success": False, "message": f"IK failed at step {i}/{steps}"}
-                self._arm.joint_control(joints[:6])
+                self._arm.joint_control(joints[:7])
                 _time.sleep(0.02)
+                current_joints = joints[:7]
 
             return {
                 "success": True,

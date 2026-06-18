@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test-simulation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('OpenRobotDemo/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r OpenRobotDemo/requirements.txt
+
+      - name: Run simulation tests
+        run: |
+          cd OpenRobotDemo
+          pytest tests/test_sim_pick_place.py -v
+
+      - name: Run minimal pick-and-place demo
+        run: |
+          cd OpenRobotDemo
+          python examples/sim_pick_place.py
+
+      - name: Upload demo frames
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-frames
+          path: OpenRobotDemo/data/episodes/sim_pick_place/*.png

@@ -487,7 +487,7 @@ class LLMPlanner:
                 {"skill": "fabric_manipulation", "args": {"operation": "withdraw", "lift_height_m": 0.10}},
             ]
 
-        if any(k in instr for k in ["pick", "grab", "抓", "拿"]):
+        if any(k in instr for k in ["pick", "grab", "捡", "抓", "拿"]):
             return [
                 {"skill": "camera_capture", "args": {"return_depth": True}},
                 {"skill": "vision_3d_estimator", "args": {"rgb_frame": "rgb_frame", "depth_frame": "depth_frame", "target_name": "target object", "end_effector_pose": "end_effector_pose"}},
@@ -497,7 +497,7 @@ class LLMPlanner:
                 {"skill": "arm_motion_executor", "args": {"command_type": "gripper", "target_values": [0.0, 0.5]}},
                 {"skill": "arm_motion_executor", "args": {"command_type": "cartesian", "target_values": "LIFT", "speed": 0.5}},
             ]
-        elif any(k in instr for k in ["place", "放", "放置"]):
+        elif any(k in instr for k in ["place", "放", "放置", "扔"]):
             return [
                 {"skill": "arm_motion_executor", "args": {"command_type": "cartesian", "target_values": "PLACE", "speed": 0.5}},
                 {"skill": "arm_motion_executor", "args": {"command_type": "gripper", "target_values": [1.0, 0.5]}},

@@ -1,0 +1,12 @@
+services:
+  openrobot-sim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: openrobot-sim
+    container_name: openrobot-sim
+    volumes:
+      - ./OpenRobotDemo/data:/app/OpenRobotDemo/data
+    environment:
+      - OPENROBOT_FORCE_MOCK=1
+    command: python examples/sim_pick_place.py

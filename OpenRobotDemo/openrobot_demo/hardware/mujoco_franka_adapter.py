@@ -198,37 +198,61 @@ class FrankaMujocoKinematics:
         euler = R.from_quat(pose_quat[3:7]).as_euler("xyz", degrees=False)
         return pose_quat[:3] + euler.tolist()
 
-    def inverse_quat(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
+    def inverse_quat(self, target_pose: List[float], joint_positions: List[float] = None,
+                      max_iters: int = 200, pos_tol: float = 0.005, rot_tol: float = 0.05,
+                      retry: int = 3) -> Optional[List[float]]:
+        """Numerical IK with damped least-squares and retry from random seeds."""
         target = np.array(target_pose)
         target_pos = target[:3]
         target_rot = R.from_quat(target[3:7]).as_matrix()
-        q = np.array(joint_positions if joint_positions is not None else self._get_current_joints())
+        q0 = np.array(joint_positions if joint_positions is not None else self._get_current_joints())
 
-        for _ in range(100):
-            pose = self.forward_quat(q.tolist())
-            pos = np.array(pose[:3])
-            rot = R.from_quat(pose[3:7]).as_matrix()
-            pos_err = target_pos - pos
-            rot_err_mat = target_rot @ rot.T
-            rot_err_vec = R.from_matrix(rot_err_mat).as_rotvec()
-            err = np.concatenate([pos_err, rot_err_vec])
-            if np.linalg.norm(err) < 1e-3:
-                break
-            J = self._compute_jacobian(q)
-            dq = J.T @ np.linalg.solve(J @ J.T + 0.01 * np.eye(6), err)
-            q = q + 0.5 * dq
-            # Clip to joint limits
-            for i in range(7):
-                lo, hi = self.model.jnt_range[self._joint_ids[i]]
-                q[i] = np.clip(q[i], lo, hi)
+        best_q = None
+        best_err = float("inf")
 
-        # Final forward check
-        final_pose = self.forward_quat(q.tolist())
-        final_pos = np.array(final_pose[:3])
-        if np.linalg.norm(final_pos - target_pos) > 0.02:
-            logger.warning("IK did not converge to target position.")
-            return None
-        return q.tolist()
+        for attempt in range(retry):
+            if attempt == 0:
+                q = q0.copy()
+            else:
+                # Random restart within joint limits
+                q = np.zeros(7)
+                for i in range(7):
+                    lo, hi = self.model.jnt_range[self._joint_ids[i]]
+                    q[i] = np.random.uniform(lo, hi)
+
+            for it in range(max_iters):
+                pose = self.forward_quat(q.tolist())
+                pos = np.array(pose[:3])
+                rot = R.from_quat(pose[3:7]).as_matrix()
+                pos_err = target_pos - pos
+                rot_err_mat = target_rot @ rot.T
+                rot_err_vec = R.from_matrix(rot_err_mat).as_rotvec()
+                err = np.concatenate([pos_err, rot_err_vec])
+                err_norm = np.linalg.norm(err)
+                if err_norm < best_err:
+                    best_err = err_norm
+                    best_q = q.copy()
+                if np.linalg.norm(pos_err) < pos_tol and np.linalg.norm(rot_err_vec) < rot_tol:
+                    return q.tolist()
+
+                J = self._compute_jacobian(q)
+                # Damped least-squares with adaptive damping near singularities
+                damping = 0.05 + 0.5 * np.exp(-0.5 * np.sqrt(np.linalg.det(J @ J.T + 1e-6 * np.eye(6))))
+                dq = J.T @ np.linalg.solve(J @ J.T + damping * np.eye(6), err)
+                # Scale step to avoid overshoot
+                step_scale = min(1.0, 0.3 / (np.linalg.norm(dq) + 1e-6))
+                q = q + step_scale * dq
+                # Clip to joint limits
+                for i in range(7):
+                    lo, hi = self.model.jnt_range[self._joint_ids[i]]
+                    q[i] = np.clip(q[i], lo, hi)
+
+        if best_q is not None and best_err < 0.05:
+            logger.debug(f"IK returned best-effort solution (err={best_err:.4f}).")
+            return best_q.tolist()
+
+        logger.warning(f"IK did not converge to target position (best err={best_err:.4f}).")
+        return None
 
     def inverse_eular(self, target_pose: List[float], joint_positions: List[float] = None) -> Optional[List[float]]:
         target = np.array(target_pose)
